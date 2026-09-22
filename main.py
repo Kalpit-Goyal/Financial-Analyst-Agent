@@ -46,7 +46,7 @@ app = FastAPI(title="Financial Analyst Agent", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://financial-analyst-agent2.vercel.app",
+        "https://financial-analyst-i11a.onrender.com",
         "http://localhost:5173",
         "http://localhost:5174",
     ],
