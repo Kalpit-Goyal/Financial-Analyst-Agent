@@ -1,5 +1,8 @@
 import json
 import os
+import asyncio
+from contextlib import asynccontextmanager
+from urllib.request import urlopen
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
@@ -10,12 +13,44 @@ from langchain_core.messages import AIMessageChunk
 from graph import create_graph
 
 
-app = FastAPI(title="Financial Analyst Agent")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "300"))
+
+
+async def keep_alive():
+    while True:
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: urlopen(BACKEND_URL, timeout=10),
+            )
+        except Exception:
+            pass
+        await asyncio.sleep(KEEP_ALIVE_INTERVAL)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(keep_alive())
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+app = FastAPI(title="Financial Analyst Agent", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[
+        "https://financial-analyst-agent2.vercel.app",
+        "http://localhost:5173",
+        "http://localhost:5174",
+    ],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -76,6 +111,7 @@ async def analyze(request: AnalysisRequest):
                 stream_mode="messages",
             ):
                 if isinstance(message_chunk, AIMessageChunk):
+                    reported_tools = set()
                     content = message_chunk.content or ""
 
                     if content:
@@ -89,12 +125,17 @@ async def analyze(request: AnalysisRequest):
                     )
                     if tool_call_chunks:
                         for chunk in tool_call_chunks:
-                            if chunk.get("name"):
-                                yield json.dumps({
-                                    "type": "tool_call",
-                                    "content":
-                                        f"\n\n*Calling {chunk['name']}...*\n\n",
-                                }) + "\n"
+                            tool_name = chunk.get("name")
+                            tool_index = chunk.get("index", 0)
+                            if tool_name:
+                                key = (tool_name, tool_index)
+                                if key not in reported_tools:
+                                    reported_tools.add(key)
+                                    yield json.dumps({
+                                        "type": "tool_call",
+                                        "content":
+                                            f"\n\n*Calling {tool_name}...*\n\n",
+                                    }) + "\n"
 
             yield json.dumps({"type": "done"}) + "\n"
         except Exception as e:
