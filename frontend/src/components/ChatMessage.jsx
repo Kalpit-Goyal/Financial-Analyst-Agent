@@ -14,7 +14,7 @@ function ChatMessage({ role, content }) {
         className={`${
           isUser
             ? "max-w-[80%] bg-blue-600 text-white"
-            : "w-full bg-slate-900 border border-slate-800 text-slate-200"
+            : "w-full bg-white border border-gray-200 text-gray-800"
         } rounded-2xl px-6 py-5`}
       >
         {!isUser && (
@@ -29,56 +29,56 @@ function ChatMessage({ role, content }) {
             components={{
               // H1
               h1: ({ children }) => (
-                <h1 className="text-2xl font-bold text-white mb-6 mt-2">
+                <h1 className="text-2xl font-bold text-gray-900 mb-6 mt-2">
                   {children}
                 </h1>
               ),
 
               // H2
               h2: ({ children }) => (
-                <h2 className="text-xl font-bold text-white mt-8 mb-4">
+                <h2 className="text-xl font-bold text-gray-900 mt-8 mb-4">
                   {children}
                 </h2>
               ),
 
               // H3
               h3: ({ children }) => (
-                <h3 className="text-lg font-semibold text-white mt-7 mb-3">
+                <h3 className="text-lg font-semibold text-gray-900 mt-7 mb-3">
                   {children}
                 </h3>
               ),
 
               // Paragraph
               p: ({ children }) => (
-                <p className="mb-5 text-slate-300 leading-7">
+                <p className="mb-5 text-gray-700 leading-7">
                   {children}
                 </p>
               ),
 
               // Bold
               strong: ({ children }) => (
-                <strong className="font-semibold text-white">
+                <strong className="font-semibold text-gray-900">
                   {children}
                 </strong>
               ),
 
               // Italic
               em: ({ children }) => (
-                <em className="text-slate-300 italic">
+                <em className="text-gray-700 italic">
                   {children}
                 </em>
               ),
 
               // Unordered list
               ul: ({ children }) => (
-                <ul className="list-disc pl-6 mb-6 space-y-2 text-slate-300">
+                <ul className="list-disc pl-6 mb-6 space-y-2 text-gray-700">
                   {children}
                 </ul>
               ),
 
               // Ordered list
               ol: ({ children }) => (
-                <ol className="list-decimal pl-6 mb-6 space-y-2 text-slate-300">
+                <ol className="list-decimal pl-6 mb-6 space-y-2 text-gray-700">
                   {children}
                 </ol>
               ),
@@ -92,7 +92,7 @@ function ChatMessage({ role, content }) {
 
               // Table
               table: ({ children }) => (
-                <div className="overflow-x-auto w-full mb-7 rounded-lg border border-slate-700">
+                <div className="overflow-x-auto w-full mb-7 rounded-lg border border-gray-300">
                   <table className="w-full min-w-[600px] border-collapse text-sm">
                     {children}
                   </table>
@@ -101,54 +101,68 @@ function ChatMessage({ role, content }) {
 
               // Table head
               thead: ({ children }) => (
-                <thead className="bg-slate-800 text-slate-100">
+                <thead className="bg-gray-100 text-gray-900">
                   {children}
                 </thead>
               ),
 
               // Table body
               tbody: ({ children }) => (
-                <tbody className="divide-y divide-slate-800">
+                <tbody className="divide-y divide-gray-200">
                   {children}
                 </tbody>
               ),
 
               // Table row
               tr: ({ children }) => (
-                <tr className="hover:bg-slate-800/50 transition">
+                <tr className="hover:bg-gray-50 transition">
                   {children}
                 </tr>
               ),
 
               // Table header cell
               th: ({ children }) => (
-                <th className="px-4 py-3 text-left font-semibold border-r border-slate-700 last:border-r-0 whitespace-nowrap">
+                <th className="px-4 py-3 text-left font-semibold border-r border-gray-300 last:border-r-0 whitespace-nowrap">
                   {children}
                 </th>
               ),
 
               // Table data cell
               td: ({ children }) => (
-                <td className="px-4 py-3 text-slate-300 border-r border-slate-800 last:border-r-0 whitespace-nowrap">
+                <td className="px-4 py-3 text-gray-700 border-r border-gray-200 last:border-r-0 whitespace-nowrap">
                   {children}
                 </td>
               ),
 
               // Horizontal rule
               hr: () => (
-                <hr className="border-slate-800 my-8" />
+                <hr className="border-gray-200 my-8" />
               ),
 
-              // Code
-              code: ({ children }) => (
-                <code className="bg-slate-800 text-blue-300 px-1.5 py-0.5 rounded text-sm">
-                  {children}
-                </code>
-              ),
+               // Pre (code block container)
+               pre: ({ children }) => (
+                 <pre className="bg-white border border-gray-200 rounded-lg p-4 overflow-x-auto mb-6">
+                   {children}
+                 </pre>
+               ),
+
+               // Code
+               code: ({ children, ...props }) => (
+                 <code
+                   className={
+                     props.inline
+                       ? "bg-gray-100 text-blue-600 px-1.5 py-0.5 rounded text-sm"
+                       : "text-blue-600 text-sm"
+                   }
+                   {...props}
+                 >
+                   {children}
+                 </code>
+               ),
 
               // Blockquote
               blockquote: ({ children }) => (
-                <blockquote className="border-l-4 border-blue-500 pl-4 my-6 text-slate-400 italic">
+                <blockquote className="border-l-4 border-blue-500 pl-4 my-6 text-gray-700 italic">
                   {children}
                 </blockquote>
               ),

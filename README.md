@@ -26,10 +26,11 @@ pip install -r requirements.txt
 Create a `.env` file in the repository root with the backend API key expected by the code:
 
 ```env
-api_key=YOUR_LLM_API_KEY
+GROQ_API_KEY=YOUR_GROQ_API_KEY
+GROQ_MODEL=openai/gpt-oss-120b
 ```
 
-The backend uses `ChatOpenAI` with a custom base URL and the model configured in [analyst.py](analyst.py).
+The backend uses `ChatGroq` (via `langchain-groq`) to connect to the Groq API. The model name can be overridden with `GROQ_MODEL`.
 
 Start the FastAPI server:
 
@@ -267,13 +268,20 @@ Request body:
 
 Response:
 
-The backend returns the final LangGraph state, including the conversation messages. The frontend reads the last assistant message from that state and displays it in the chat.
+`POST /analyze` returns a **stream** of newline-delimited JSON (NDJSON) events. Each line is a JSON object:
+
+- `{"type": "token", "content": "..."}` — a chunk of the assistant's response text (token or tool call annotation)
+- `{"type": "done"}` — signals the end of the response
+- `{"type": "error", "content": "..."}` — signals a failure
+
+The frontend accumulates the token events and renders the result as markdown.
 
 ## Environment Variables
 
 Backend:
 
-- `api_key` - required by [analyst.py](analyst.py) for the LLM client.
+- `GROQ_API_KEY` - required by [analyst.py](analyst.py) for the Groq LLM client.
+- `GROQ_MODEL` - the Groq model to use (defaults to `openai/gpt-oss-120b`).
 
 Frontend:
 

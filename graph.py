@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -8,6 +9,8 @@ from state import AgentState
 from user_input import get_ticker
 from analyst import analyst_node
 
+SERVER_PATH = str(Path(__file__).resolve().parent / "mcp_server" / "financial_tools.py")
+
 
 async def create_graph():
 
@@ -15,7 +18,7 @@ async def create_graph():
         {
             "financial": {
                 "command": sys.executable,
-                "args": ["mcp_server/financial_tools.py"],
+                "args": [SERVER_PATH],
                 "transport": "stdio",
             }
         }
