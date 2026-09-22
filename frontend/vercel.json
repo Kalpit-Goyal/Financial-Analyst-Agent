@@ -1,0 +1,1 @@
+{"build": {"env": {"VITE_API_URL": "https://financial-analyst-agent-yueo.onrender.com"}}, "routes": [{"src": "/(.*)", "dest": "/index.html"}]}
