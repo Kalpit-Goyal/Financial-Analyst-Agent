@@ -96,18 +96,71 @@ The backend launches the MCP server from [mcp_server/financial_tools.py](mcp_ser
 
 Current tools exposed by the server:
 
-1. `get_financials(ticker)` - returns the Yahoo Finance income statement.
-2. `get_balance_sheet(ticker)` - returns the Yahoo Finance balance sheet.
-3. `get_market_data(ticker)` - returns current market and valuation data from Yahoo Finance.
+1. `get_financials(ticker, period)` - returns the Yahoo Finance income statement. `period` is
+   `"annual"` (default) or `"quarterly"`.
+2. `get_balance_sheet(ticker, period)` - returns the Yahoo Finance balance sheet, annual or quarterly.
+3. `get_market_data(ticker)` - returns current price, market cap, 52-week range, volume and valuation
+   multiples from Yahoo Finance.
 
-The server runs over standard I/O, so the graph can start it as a child process and pull the tools directly into the agent runtime.
+### How the server is launched
+
+The backend launches the MCP server from [mcp_server/financial_tools.py](mcp_server/financial_tools.py)
+using `MultiServerMCPClient` in [graph.py](graph.py).
+
+The server runs as a **long-lived Streamable HTTP process on localhost** (default `127.0.0.1:8931`),
+started once by the backend and reused for the lifetime of the process. The compiled LangGraph is
+also cached, so tool discovery runs once instead of on every request.
+
+This matters for two reasons:
+
+- **Caching.** The MCP server keeps a TTL cache of fetched data (default 900s), so asking the same
+  question twice does not hit Yahoo Finance twice. This only works because the server process
+  persists; with a stdio transport the adapter spawns a fresh process per tool call and the cache
+  would be useless.
+- **Rate limits.** Yahoo Finance throttles aggressive clients. The server fetches the heavy
+  `Ticker.info` profile only as a fallback and otherwise uses the lighter `fast_info` and
+  `get_valuation_measures()` endpoints.
+
+If the HTTP server fails to start within `MCP_STARTUP_TIMEOUT` seconds, the backend silently falls
+back to a stdio transport. The tools still work, but the cache is lost.
+
+## Data Shape and Period Handling
+
+Statement tools return an explicit shape so the model cannot mislabel a figure:
+
+```json
+{
+  "ticker": "NVDA",
+  "source": "income_stmt_quarterly",
+  "frequency": "quarterly",
+  "periods": ["2026-07-31", "2026-04-30", "..."],
+  "data": { "2026-07-31": { "Total Revenue": 96221000000.0 } }
+}
+```
+
+`periods` lists the most recent reporting dates first, and `data` maps each period to its line items.
+
+- Annual and quarterly data are fetched from different Yahoo Finance attributes. Asking for
+  "quarterly revenue" returns `quarterly_income_stmt`; asking for annual returns `income_stmt`.
+  They are never mixed.
+- Only the most recent `FIN_TOOL_PERIODS` periods are returned.
+- Missing values are `null`, never `NaN`, and all output is valid JSON.
+
+## Error Handling
+
+- A rate limit returns `{"error": ..., "retryable": false, "advice": "..."}`. The advice field tells
+  the model to stop calling the tool and report unavailability rather than retrying, which is what
+  previously caused the same tool to be called repeatedly.
+- Successful results include `"cached": true` when served from the TTL cache.
+- Empty statements return a `note` instead of an error.
+- Any other exception returns `{"error": ..., "ticker": ...}`.
 
 ## Project Structure
 
 ### Root backend files
 
-- [main.py](main.py) - FastAPI entry point with the `/` health check and `/analyze` endpoint.
-- [graph.py](graph.py) - Builds the LangGraph, connects the ticker lookup, analyst node, and MCP tool node, and compiles the graph per request.
+- [main.py](main.py) - FastAPI entry point with the `/` health check and the `/analyze` endpoint.
+- [graph.py](graph.py) - Starts the MCP tool server, builds the LangGraph (ticker lookup, analyst node, MCP tool node), caches the compiled graph, and shuts the server down.
 - [analyst.py](analyst.py) - Creates the LLM, binds tools, injects the system prompt, and returns the assistant response.
 - [state.py](state.py) - Defines the shared LangGraph state shape used across the workflow.
 - [user_input.py](user_input.py) - Resolves a company name to a ticker using Yahoo Finance search.
@@ -115,8 +168,7 @@ The server runs over standard I/O, so the graph can start it as a child process 
 
 ### MCP server files
 
-- [mcp_server/financial_tools.py](mcp_server/financial_tools.py) - MCP tool definitions that fetch financial statements and market data from Yahoo Finance.
-- [mcp_server/__init__.py](mcp_server/__init__.py) - Marks the directory as a Python package.
+- [mcp_server/financial_tools.py](mcp_server/financial_tools.py) - MCP tool definitions that fetch financial statements and market data from Yahoo Finance. Converts pandas/NumPy output to strictly valid JSON, caches results, and distinguishes rate-limit errors. Runs as a persistent Streamable HTTP server, or over stdio if requested.
 
 ### Frontend files
 
@@ -159,13 +211,17 @@ The backend entry point is [main.py](main.py).
 
 1. `GET /` returns a simple health payload.
 2. `POST /analyze` receives a company name and question.
-3. The endpoint calls `create_graph()` from [graph.py](graph.py).
+3. The endpoint calls `create_graph()` from [graph.py](graph.py), which starts the MCP tool server
+   on the first request and reuses it afterwards.
 4. A fresh initial state is assembled with the company, an empty ticker slot, and the user's message.
-5. `graph.ainvoke(...)` runs the agent pipeline and returns the final state.
+5. `graph.astream(...)` runs the agent pipeline and streams NDJSON events back.
 
-### Why the graph is built per request
+### Why the graph is built once and reused
 
-The current code creates the graph inside `/analyze` instead of globally. That means the MCP client and tool discovery are rebuilt for each request, which keeps the request logic simple and isolated, but adds some overhead.
+`create_graph()` caches the compiled graph and the MCP client at module level, so the MCP server
+subprocess and the financial-data cache survive across requests. Building the graph per request
+(previous behaviour) meant a new subprocess and an empty cache for every question. `close_graph()`
+terminates the server process on application shutdown.
 
 ## File-by-File Details
 
@@ -270,7 +326,8 @@ Response:
 
 `POST /analyze` returns a **stream** of newline-delimited JSON (NDJSON) events. Each line is a JSON object:
 
-- `{"type": "token", "content": "..."}` — a chunk of the assistant's response text (token or tool call annotation)
+- `{"type": "token", "content": "..."}` — a chunk of the assistant's response text
+- `{"type": "tool_call", "content": "*Calling get_financials...*"}` — an annotation that a tool was called
 - `{"type": "done"}` — signals the end of the response
 - `{"type": "error", "content": "..."}` — signals a failure
 
@@ -278,10 +335,21 @@ The frontend accumulates the token events and renders the result as markdown.
 
 ## Environment Variables
 
+Copy `.env.example` to `.env` and fill in the values. See [`.env.example`](.env.example) for the full
+list with defaults.
+
 Backend:
 
 - `GROQ_API_KEY` - required by [analyst.py](analyst.py) for the Groq LLM client.
 - `GROQ_MODEL` - the Groq model to use (defaults to `openai/gpt-oss-120b`).
+- `MCP_HOST` / `MCP_PORT` - host and port for the local MCP tool server (default `127.0.0.1:8931`).
+- `MCP_STARTUP_TIMEOUT` - seconds to wait for that server to accept connections before falling back
+  to stdio (default `20`).
+- `FIN_TOOL_PERIODS` - how many recent reporting periods each statement tool returns (default `8`).
+- `FIN_TOOL_CACHE_TTL` - seconds to cache financial data in the tool server (default `900`).
+- `FIN_TOOL_RETRY_BACKOFF` - seconds to wait before retrying once after a rate limit (default `3`).
+- `BACKEND_URL` / `KEEP_ALIVE_INTERVAL` - used by the self-ping keep-alive task.
+- `LANGSMITH_API_KEY` / `LANGSMITH_TRACING` / `LANGSMITH_PROJECT` - optional tracing.
 
 Frontend:
 
@@ -308,7 +376,12 @@ npm run lint
 
 - The app depends on network access to Yahoo Finance and the configured LLM provider.
 - If the frontend cannot reach the backend, check `VITE_API_URL` and make sure FastAPI is running.
-- If tool calls fail, verify that the MCP server file [mcp_server/financial_tools.py](mcp_server/financial_tools.py) can be launched by the same Python interpreter used for the backend.
+- The backend binds an extra localhost port (`MCP_PORT`, default 8931) for the MCP tool server. It
+  does not need to be exposed publicly, and no firewall rule is required.
+- If the MCP server cannot bind that port, the backend falls back to a stdio transport. Everything
+  keeps working but the financial-data cache is lost.
+- Yahoo Finance rate-limits aggressive use. The tool server caches results and avoids the heaviest
+  endpoints to stay under the limit, but a heavily used shared deployment can still be throttled.
 - The frontend currently expects markdown-formatted answers, so the assistant output is rendered with markdown support instead of plain text.
 
 ## Extending The Project

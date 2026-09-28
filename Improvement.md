@@ -6,6 +6,29 @@ problem, the affected file, and a concrete fix suggestion.
 
 ---
 
+## Resolution Status
+
+Items 9, 10, 11, and parts of 6 were addressed in a later change that fixed the financial tools
+returning no data and being rate-limited. The summary table below still shows the state at the
+time of the original analysis.
+
+| # | Status | Note |
+|---|--------|------|
+| 3 | Fixed | `graph.py` already builds an absolute `SERVER_PATH`. |
+| 9 | Fixed | `_sanitize` replaced with a recursive converter that stringifies date **keys**, maps `NaN`/`inf` to `null`, and casts NumPy types. Output is now valid strict JSON. |
+| 9 (b) | Fixed | Statements are trimmed to `FIN_TOOL_PERIODS` most recent periods, with an explicit `periods` list. |
+| 10 | Fixed | Every `yfinance` call is wrapped; `YFRateLimitError` is caught distinctly and returns a non-retryable `advice` field so the model stops retrying. |
+| 11 | Fixed | The compiled graph and MCP client are cached at module level; the LLM is already `lru_cache`d. The server is a persistent Streamable HTTP process rather than one stdio subprocess per call. |
+| 6 | Partly fixed | `recursion_limit: 50` is set per request in `main.py`, and the system prompt instructs the model to call each tool once and not retry after an error. There is still no explicit tool-round counter node. |
+
+Still open: 1, 2, 4, 5, 7, 8, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23.
+
+A new issue was introduced and fixed during the work above: the statement tools returned only
+annual data, so a question about "quarterly" revenue was answered with the full-year figure. The
+tools now take a `period` argument and return a `frequency` field.
+
+---
+
 ## Summary Table
 
 | # | Severity | Area | Issue |

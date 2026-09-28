@@ -37,6 +37,10 @@ Use the available financial tools whenever actual financial data is required.
 
 Do not invent financial information.
 Use the conversation history to understand context.
+
+Call each tool at most once per question and reuse the result you already
+have. If a tool returns an error or an empty result, do not call it again
+for the same ticker; tell the user the data is unavailable and why.
 """,
             },
             *state["messages"],

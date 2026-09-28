@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain_core.messages import AIMessageChunk
 
-from graph import create_graph
+from graph import create_graph, close_graph
 
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
@@ -39,6 +39,7 @@ async def lifespan(app: FastAPI):
         await task
     except asyncio.CancelledError:
         pass
+    await close_graph()
 
 
 app = FastAPI(title="Financial Analyst Agent", lifespan=lifespan)
@@ -92,6 +93,8 @@ async def analyze(request: AnalysisRequest):
         "artifacts": {},
     }
 
+    reported_tool_calls: set = set()
+
     async def event_stream():
         try:
             async for message_chunk, metadata in graph.astream(
@@ -107,7 +110,6 @@ async def analyze(request: AnalysisRequest):
                 stream_mode="messages",
             ):
                 if isinstance(message_chunk, AIMessageChunk):
-                    reported_tools = set()
                     content = message_chunk.content or ""
 
                     if content:
@@ -122,16 +124,20 @@ async def analyze(request: AnalysisRequest):
                     if tool_call_chunks:
                         for chunk in tool_call_chunks:
                             tool_name = chunk.get("name")
-                            tool_index = chunk.get("index", 0)
-                            if tool_name:
-                                key = (tool_name, tool_index)
-                                if key not in reported_tools:
-                                    reported_tools.add(key)
-                                    yield json.dumps({
-                                        "type": "tool_call",
-                                        "content":
-                                            f"\n\n*Calling {tool_name}...*\n\n",
-                                    }) + "\n"
+                            if not tool_name:
+                                continue
+
+                            call_id = chunk.get("id")
+                            dedupe_key = call_id or (tool_name, chunk.get("index", 0))
+                            if dedupe_key in reported_tool_calls:
+                                continue
+
+                            reported_tool_calls.add(dedupe_key)
+                            yield json.dumps({
+                                "type": "tool_call",
+                                "content":
+                                    f"\n\n*Calling {tool_name}...*\n\n",
+                            }) + "\n"
 
             yield json.dumps({"type": "done"}) + "\n"
         except Exception as e:
