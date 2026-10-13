@@ -4,10 +4,12 @@ import ChatWindow from "./components/ChatWindow";
 
 function App() {
   const [company, setCompany] = useState("");
+  const [ticker, setTicker] = useState("");
   const [started, setStarted] = useState(false);
 
-  const handleCompanySubmit = (companyName) => {
+  const handleCompanySubmit = (tickerSymbol, companyName) => {
     setCompany(companyName);
+    setTicker(tickerSymbol);
     setStarted(true);
   };
 
@@ -18,6 +20,7 @@ function App() {
   return (
     <ChatWindow
       company={company}
+      ticker={ticker}
     />
   );
 }

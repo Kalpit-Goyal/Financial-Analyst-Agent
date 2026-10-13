@@ -1,21 +1,23 @@
 import asyncio
 import os
-import socket
 import sys
 from pathlib import Path
+from typing import Literal
 
+from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.graph import StateGraph, START, END
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import ToolNode
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from state import AgentState
-from user_input import get_ticker
-from analyst import analyst_node
+from analyst import make_analyst_node, make_final_answer_node
 
 SERVER_PATH = str(Path(__file__).resolve().parent / "mcp_server" / "financial_tools.py")
 MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
 MCP_PORT = int(os.getenv("MCP_PORT", "8931"))
 SERVER_STARTUP_TIMEOUT = float(os.getenv("MCP_STARTUP_TIMEOUT", "20"))
+
+MAX_TOOL_CALLS = 6
 
 _graph = None
 _server = None
@@ -23,6 +25,7 @@ _lock = asyncio.Lock()
 
 
 def _port_open() -> bool:
+    import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.5)
         return sock.connect_ex((MCP_HOST, MCP_PORT)) == 0
@@ -79,6 +82,25 @@ async def _create_client() -> MultiServerMCPClient:
     )
 
 
+def tools_used_this_turn(messages) -> int:
+    n = 0
+    for m in reversed(messages):
+        if isinstance(m, HumanMessage):
+            break
+        if isinstance(m, ToolMessage):
+            n += 1
+    return n
+
+
+def should_continue(state: AgentState) -> Literal["tools", "final_answer", END]:
+    last = state["messages"][-1]
+    if getattr(last, "tool_calls", None) and tools_used_this_turn(state["messages"]) < MAX_TOOL_CALLS:
+        return "tools"
+    if getattr(last, "tool_calls", None):
+        return "final_answer"
+    return END
+
+
 async def create_graph():
     global _graph
 
@@ -94,31 +116,33 @@ async def create_graph():
 
         graph = StateGraph(AgentState)
 
-        graph.add_node("get_ticker", get_ticker)
+        analyst_node = make_analyst_node(tools)
+        final_answer_node = make_final_answer_node()
 
-        graph.add_node(
-            "analyst",
-            lambda state: analyst_node(state, tools)
-        )
+        graph.add_node("analyst", analyst_node)
 
         graph.add_node(
             "tools",
             ToolNode(tools)
         )
 
-        graph.add_edge(START, "get_ticker")
-        graph.add_edge("get_ticker", "analyst")
+        graph.add_node("final_answer", final_answer_node)
+
+        graph.add_edge(START, "analyst")
 
         graph.add_conditional_edges(
             "analyst",
-            tools_condition,
+            should_continue,
             {
                 "tools": "tools",
+                "final_answer": "final_answer",
                 END: END,
             },
         )
 
         graph.add_edge("tools", "analyst")
+
+        graph.add_edge("final_answer", END)
 
         _graph = graph.compile()
         return _graph

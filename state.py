@@ -6,16 +6,12 @@ class AgentState(TypedDict):
     company: str
     ticker: str
     messages: Annotated[list, add_messages]
-    financial_data: dict
-    web_data: dict
-    artifacts: dict
 
 
-initial_state: AgentState = {
-    "company": "",
-    "ticker": "",
-    "messages": [],
-    "financial_data": {},
-    "web_data": {},
-    "artifacts": {},
-}
+def create_initial_state(company: str, messages: list, question: str, ticker: str = "") -> AgentState:
+    """Create the initial agent state for a new analysis request."""
+    return {
+        "company": company,
+        "ticker": ticker,
+        "messages": messages + [{"role": "user", "content": question}],
+    }

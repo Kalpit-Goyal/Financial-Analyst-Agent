@@ -1,62 +1,70 @@
 import json
+import logging
 import os
 import asyncio
 from contextlib import asynccontextmanager
-from urllib.request import urlopen
+from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Query
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from langchain_core.messages import AIMessageChunk
 
 from graph import create_graph, close_graph
+from state import create_initial_state
+from user_input import search_tickers
 
 
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
-KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "300"))
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+
+# Rate limiting
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(key_func=get_remote_address)
 
 
-async def keep_alive():
-    while True:
-        try:
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None,
-                lambda: urlopen(BACKEND_URL, timeout=10),
-            )
-        except Exception:
-            pass
-        await asyncio.sleep(KEEP_ALIVE_INTERVAL)
+# Fail fast at startup
+if not os.getenv("GROQ_API_KEY"):
+    raise RuntimeError("GROQ_API_KEY is not configured. Set it in the .env file.")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(keep_alive())
     yield
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
     await close_graph()
 
 
 app = FastAPI(title="Financial Analyst Agent", lifespan=lifespan)
 
+# Rate limiter setup
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 
+class ChatTurn(BaseModel):
+    role: str = Field(pattern=r"^(user|assistant)$")
+    content: str = Field(max_length=4000)
+
+
 class AnalysisRequest(BaseModel):
-    company: str
-    question: str
-    messages: list = []
+    company: str = Field(min_length=1, max_length=80)
+    ticker: str = Field(pattern=r"^[A-Za-z0-9.\-^=]{1,15}$")
+    question: str = Field(min_length=1, max_length=1000)
+    messages: list[ChatTurn] = Field(default_factory=list, max_length=12)
+
+
+logger = logging.getLogger(__name__)
 
 
 @app.get("/")
@@ -64,46 +72,35 @@ def health_check():
     return {"status": "ok"}
 
 
+@app.get("/resolve")
+async def resolve(q: str = Query(min_length=1, max_length=80)):
+    results = await asyncio.to_thread(search_tickers, q)
+    return {"results": results}
+
+
 @app.post("/analyze")
-async def analyze(request: AnalysisRequest):
-
-    if not os.getenv("GROQ_API_KEY"):
-        async def error_stream():
-            yield json.dumps({
-                "type": "error",
-                "content": "GROQ_API_KEY is not configured. Set it in the .env file.",
-            }) + "\n"
-            yield json.dumps({"type": "done"}) + "\n"
-
-        return StreamingResponse(error_stream(), media_type="application/x-ndjson")
-
-    graph = await create_graph()
-
-    initial_state = {
-        "company": request.company,
-        "ticker": "",
-        "messages": request.messages + [
-            {
-                "role": "user",
-                "content": request.question,
-            }
-        ],
-        "financial_data": {},
-        "web_data": {},
-        "artifacts": {},
-    }
-
-    reported_tool_calls: set = set()
-
+@limiter.limit("10/minute")
+async def analyze(request: Request, body: AnalysisRequest):
     async def event_stream():
         try:
+            graph = await create_graph()
+
+            initial_state = create_initial_state(
+                company=body.company,
+                messages=[t.model_dump() for t in body.messages],
+                question=body.question,
+                ticker=body.ticker,
+            )
+
+            reported_tool_calls: set = set()
+
             async for message_chunk, metadata in graph.astream(
                 initial_state,
                 config={
                     "tags": ["financial-analysis"],
                     "metadata": {
-                        "company": request.company,
-                        "question": request.question,
+                        "company": body.company,
+                        "question": body.question,
                     },
                     "recursion_limit": 50,
                 },
@@ -135,15 +132,15 @@ async def analyze(request: AnalysisRequest):
                             reported_tool_calls.add(dedupe_key)
                             yield json.dumps({
                                 "type": "tool_call",
-                                "content":
-                                    f"\n\n*Calling {tool_name}...*\n\n",
+                                "tool": tool_name,
                             }) + "\n"
 
             yield json.dumps({"type": "done"}) + "\n"
-        except Exception as e:
+        except Exception:
+            logger.exception("analysis failed")
             yield json.dumps({
                 "type": "error",
-                "content": str(e),
+                "content": "Analysis failed. Please try again.",
             }) + "\n"
 
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")
