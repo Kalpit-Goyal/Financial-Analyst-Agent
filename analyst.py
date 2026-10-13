@@ -4,7 +4,7 @@ from functools import lru_cache
 
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage
 
 from state import AgentState
 
@@ -54,7 +54,17 @@ def make_final_answer_node():
 
     async def final_answer_node(state: AgentState):
         prompt = SYSTEM_PROMPT.format(company=state["company"], ticker=state["ticker"])
-        response = await llm.ainvoke([SystemMessage(content=prompt), *state["messages"]])
+
+        msgs = list(state["messages"])
+        # Drop the last AIMessage if it has tool_calls but no tool results
+        if msgs and isinstance(msgs[-1], AIMessage) and msgs[-1].tool_calls:
+            msgs = msgs[:-1]
+
+        prompt += (
+            "\n\nThe tool-call limit was reached. Do not request tools. "
+            "Answer from the data already retrieved and say what is missing."
+        )
+        response = await llm.ainvoke([SystemMessage(content=prompt), *msgs])
         return {"messages": [response]}
 
     return final_answer_node

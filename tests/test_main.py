@@ -129,7 +129,7 @@ class TestAnalyzeValidation:
             "company": "NVIDIA",
             "ticker": "NVDA",
             "question": "test",
-            "messages": [{"role": "user", "content": "x" * 4001}],
+            "messages": [{"role": "user", "content": "x" * 20001}],
         })
         assert response.status_code == 422
 

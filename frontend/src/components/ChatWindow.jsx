@@ -187,18 +187,6 @@ function ChatWindow({ company, ticker }) {
             <div className="text-sm text-gray-700 px-3 py-2 rounded-lg bg-gray-100">
               Financial Analysis
             </div>
-            <div className="text-sm text-gray-400 px-3 py-2 rounded-lg">
-              Web Research
-            </div>
-            <div className="text-sm text-gray-400 px-3 py-2 rounded-lg">
-              Charts
-            </div>
-            <div className="text-sm text-gray-400 px-3 py-2 rounded-lg">
-              Predictions
-            </div>
-            <div className="text-sm text-gray-400 px-3 py-2 rounded-lg">
-              Reports
-            </div>
           </div>
         </div>
       </aside>
@@ -271,7 +259,7 @@ function ChatWindow({ company, ticker }) {
                 ))}
 
                 {/* Loading indicator */}
-                {(loading || (messages.at(-1)?.tools && messages.at(-1)?.tools.length > 0)) && (
+                {loading && !messages.at(-1)?.content && (
                   <div className="flex justify-start">
                     <div className="bg-white border border-gray-200 rounded-2xl px-5 py-4">
                       <div className="flex gap-1">

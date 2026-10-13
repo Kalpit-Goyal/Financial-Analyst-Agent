@@ -1,43 +1,31 @@
-from functools import lru_cache
+import time
 import yfinance as yf
 
+# Simple dict cache: only store non-empty results to avoid caching failures
+_search_cache: dict[str, tuple] = {}
+_CACHE_TTL = 900  # 15 minutes
 
-@lru_cache(maxsize=256)
+
 def search_tickers(query: str) -> tuple:
+    """Search for equity tickers matching a query. Caches non-empty results only."""
+    now = time.monotonic()
+    cached = _search_cache.get(query)
+    if cached:
+        ts, results = cached
+        if now - ts < _CACHE_TTL:
+            return results
+
     try:
         quotes = yf.Search(query).quotes
     except Exception:
         return ()
-    return tuple(
+
+    results = tuple(
         {"symbol": q["symbol"], "name": q.get("shortname") or q.get("longname"), "exchange": q.get("exchDisp")}
         for q in quotes if q.get("quoteType") == "EQUITY"
     )[:5]
 
+    if results:
+        _search_cache[query] = (now, results)
 
-# Keep old get_ticker for backward compatibility (used by graph.py for now)
-def get_ticker(state):
-    company = state["company"]
-
-    try:
-        search = yf.Search(company)
-        results = search.quotes
-    except Exception as e:
-        return {
-            "ticker": "not available",
-            "error": str(e),
-        }
-
-    if not results:
-        return {
-            "ticker": "not available",
-        }
-
-    for result in results:
-        if result.get("quoteType") == "EQUITY":
-            return {
-                "ticker": result["symbol"],
-            }
-
-    return {
-        "ticker": "not available",
-    }
+    return results

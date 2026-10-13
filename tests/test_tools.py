@@ -1,6 +1,7 @@
 import pytest
 import json
 import math
+import asyncio
 from datetime import date
 from unittest.mock import patch, MagicMock, AsyncMock
 
@@ -8,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 # Import modules under test
+import mcp_server.financial_tools as ft
 from mcp_server.financial_tools import (
     _json_key,
     _json_safe,
@@ -16,7 +18,7 @@ from mcp_server.financial_tools import (
     _validate_ticker,
 )
 from state import AgentState, create_initial_state
-from user_input import search_tickers, get_ticker
+from user_input import search_tickers
 
 
 class TestJsonKey:
@@ -245,35 +247,50 @@ class TestUserInput:
     def test_search_tickers_exception(self, mock_search):
         mock_search.side_effect = Exception("Network error")
         # Clear cache before test
-        search_tickers.cache_clear()
+        import user_input
+        user_input._search_cache.clear()
         results = search_tickers("NVIDIA")
         assert results == ()
 
-    @patch("user_input.yf.Search")
-    def test_get_ticker(self, mock_search):
-        mock_quotes = [
-            {"symbol": "NVDA", "shortname": "NVIDIA Corp", "exchDisp": "NASDAQ", "quoteType": "EQUITY"},
-        ]
-        mock_search.return_value.quotes = mock_quotes
+    def test_search_tickers_no_cache_on_failure(self):
+        """Verify failures are not cached - subsequent call should retry and succeed."""
+        import user_input
+        user_input._search_cache.clear()
+        with patch("user_input.yf.Search") as mock_search:
+            mock_search.side_effect = Exception("Network error")
+            r1 = search_tickers("FAIL")
+            assert r1 == ()
+            # Second call should also attempt (not cached) and succeed
+            mock_search.side_effect = None
+            mock_search.return_value.quotes = [
+                {"symbol": "NVDA", "shortname": "NVIDIA Corp", "exchDisp": "NASDAQ", "quoteType": "EQUITY"},
+            ]
+            r2 = search_tickers("FAIL")
+            assert r2 != ()
+            assert r2[0]["symbol"] == "NVDA"
 
-        state = {"company": "NVIDIA"}
-        result = get_ticker(state)
-        assert result["ticker"] == "NVDA"
 
-    @patch("user_input.yf.Search")
-    def test_get_ticker_no_results(self, mock_search):
-        mock_search.return_value.quotes = []
-        state = {"company": "INVALID"}
-        result = get_ticker(state)
-        assert result["ticker"] == "not available"
+class TestFinancialTools:
+    @patch("mcp_server.financial_tools.yf.Ticker")
+    def test_get_financials_returns_dict(self, mock_ticker_class):
+        """Test that get_financials returns a dict, not a coroutine."""
+        ft._cache.clear()
 
-    @patch("user_input.yf.Search")
-    def test_get_ticker_exception(self, mock_search):
-        mock_search.side_effect = Exception("Network error")
-        state = {"company": "NVIDIA"}
-        result = get_ticker(state)
-        assert result["ticker"] == "not available"
-        assert "error" in result
+        fake = MagicMock()
+        fake.income_stmt = pd.DataFrame(
+            {pd.Timestamp("2025-01-31"): {"Total Revenue": 100.0}},
+            index=["Total Revenue"],
+        )
+        fake.get_info.return_value = {"financialCurrency": "USD"}
+        mock_ticker_class.return_value = fake
+
+        result = asyncio.run(ft.get_financials("NVDA", "annual"))
+
+        assert isinstance(result, dict), f"Expected dict, got {type(result)}"
+        assert "data" in result
+        assert "2025-01-31" in result["data"]
+        assert result["data"]["2025-01-31"]["Total Revenue"] == 100.0
+        assert result["currency"] == "USD"
 
 
 if __name__ == "__main__":

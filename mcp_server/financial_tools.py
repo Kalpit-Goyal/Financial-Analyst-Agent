@@ -16,6 +16,7 @@ mcp = FastMCP("FinancialTools")
 
 PERIOD_LIMIT = int(os.getenv("FIN_TOOL_PERIODS", "8"))
 CACHE_TTL = int(os.getenv("FIN_TOOL_CACHE_TTL", "900"))
+CURRENCY_CACHE_TTL = int(os.getenv("FIN_TOOL_CURRENCY_CACHE_TTL", "60"))
 RETRY_BACKOFF = float(os.getenv("FIN_TOOL_RETRY_BACKOFF", "3"))
 MAX_CACHE_SIZE = 256
 
@@ -38,7 +39,6 @@ def _cache_get(key):
 
 def _cache_set(key, value):
     _cache[key] = (time.monotonic(), value)
-    # Evict expired entries when cache grows too large
     if len(_cache) > MAX_CACHE_SIZE:
         now = time.monotonic()
         expired = [k for k, (ts, _) in _cache.items() if now - ts > CACHE_TTL]
@@ -90,16 +90,16 @@ def _json_safe(obj):
     return str(obj)
 
 
-async def _get_currency(ticker: str) -> str | None:
+def _get_currency(ticker: str) -> str | None:
     """Get and cache the financial currency for a ticker."""
     now = time.monotonic()
     if ticker in _currency_cache:
         ts, curr = _currency_cache[ticker]
-        if now - ts < CACHE_TTL:
+        if now - ts < CURRENCY_CACHE_TTL:
             return curr
 
     try:
-        info = await asyncio.to_thread(yf.Ticker(ticker).get_info)
+        info = yf.Ticker(ticker).get_info()
         if isinstance(info, dict):
             currency = info.get("financialCurrency") or info.get("currency")
             if currency:
@@ -107,6 +107,8 @@ async def _get_currency(ticker: str) -> str | None:
                 return currency
     except Exception:
         pass
+    # Cache failure for CURRENCY_CACHE_TTL seconds to avoid hammering on rate limits
+    _currency_cache[ticker] = (now, None)
     return None
 
 
@@ -191,7 +193,7 @@ INFO_FALLBACK_FIELDS = (
 )
 
 
-async def _market_data(ticker: str, stock: yf.Ticker) -> dict:
+def _market_data(ticker: str, stock: yf.Ticker) -> dict:
     snapshot = {"ticker": ticker, "source": "market_data"}
 
     try:
@@ -204,7 +206,7 @@ async def _market_data(ticker: str, stock: yf.Ticker) -> dict:
 
     measures = None
     try:
-        measures = await asyncio.to_thread(stock.get_valuation_measures)
+        measures = stock.get_valuation_measures()
     except Exception as exc:
         snapshot["valuation_warning"] = str(exc)
 
@@ -247,7 +249,7 @@ def _validate_ticker(ticker: str) -> dict | None:
     return None
 
 
-async def _get_financials_sync(ticker: str, period: Literal["annual", "quarterly"]) -> dict:
+def _get_financials_sync(ticker: str, period: Literal["annual", "quarterly"]) -> dict:
     """Synchronous inner function for get_financials."""
     frequency = "quarterly" if period == "quarterly" else "annual"
     attribute = "quarterly_income_stmt" if frequency == "quarterly" else "income_stmt"
@@ -265,7 +267,7 @@ async def _get_financials_sync(ticker: str, period: Literal["annual", "quarterly
             ),
         )
 
-    currency = await _get_currency(ticker)
+    currency = _get_currency(ticker)
     result = _cached((f"income_stmt_{frequency}", ticker), loader)
     if "error" not in result:
         result["currency"] = currency
@@ -297,7 +299,7 @@ async def get_financials(ticker: str, period: Literal["annual", "quarterly"] = "
         }
 
 
-async def _get_balance_sheet_sync(ticker: str, period: Literal["annual", "quarterly"]) -> dict:
+def _get_balance_sheet_sync(ticker: str, period: Literal["annual", "quarterly"]) -> dict:
     """Synchronous inner function for get_balance_sheet."""
     frequency = "quarterly" if period == "quarterly" else "annual"
     attribute = "quarterly_balance_sheet" if frequency == "quarterly" else "balance_sheet"
@@ -314,7 +316,7 @@ async def _get_balance_sheet_sync(ticker: str, period: Literal["annual", "quarte
             ),
         )
 
-    currency = await _get_currency(ticker)
+    currency = _get_currency(ticker)
     result = _cached((f"balance_sheet_{frequency}", ticker), loader)
     if "error" not in result:
         result["currency"] = currency
@@ -345,7 +347,7 @@ async def get_balance_sheet(ticker: str, period: Literal["annual", "quarterly"] 
         }
 
 
-async def _get_cash_flow_sync(ticker: str, period: Literal["annual", "quarterly"]) -> dict:
+def _get_cash_flow_sync(ticker: str, period: Literal["annual", "quarterly"]) -> dict:
     """Synchronous inner function for get_cash_flow."""
     frequency = "quarterly" if period == "quarterly" else "annual"
     attribute = "quarterly_cash_flow" if frequency == "quarterly" else "cash_flow"
@@ -362,7 +364,7 @@ async def _get_cash_flow_sync(ticker: str, period: Literal["annual", "quarterly"
             ),
         )
 
-    currency = await _get_currency(ticker)
+    currency = _get_currency(ticker)
     result = _cached((f"cash_flow_{frequency}", ticker), loader)
     if "error" not in result:
         result["currency"] = currency
@@ -393,7 +395,7 @@ async def get_cash_flow(ticker: str, period: Literal["annual", "quarterly"] = "a
         }
 
 
-async def _get_market_data_sync(ticker: str) -> dict:
+def _get_market_data_sync(ticker: str) -> dict:
     """Synchronous inner function for get_market_data."""
     def loader():
         return _with_rate_limit_retry(
@@ -427,6 +429,7 @@ async def get_market_data(ticker: str) -> dict:
 
 
 if __name__ == "__main__":
+    import asyncio
     transport = os.getenv("MCP_TRANSPORT", "stdio")
     if transport == "stdio":
         mcp.run()

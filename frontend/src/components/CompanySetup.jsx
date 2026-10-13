@@ -1,41 +1,52 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 function CompanySetup({ onSubmit }) {
   const [company, setCompany] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [selected, setSelected] = useState(null);
+  const debounceRef = useRef(null);
 
   useEffect(() => {
-    let cancelled = false;
-    async function search() {
-      if (company.trim().length >= 2) {
-        setSearching(true);
-        try {
-          const response = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:8000"}/resolve?q=${encodeURIComponent(company)}`);
-          const data = await response.json();
-          if (!cancelled) {
-            setResults(data.results || []);
-          }
-        } catch {
-          if (!cancelled) setResults([]);
-        } finally {
-          if (!cancelled) setSearching(false);
-        }
-      } else {
-        setResults([]);
-      }
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
     }
-    search();
-    return () => { cancelled = true; };
+    debounceRef.current = setTimeout(() => {
+      let cancelled = false;
+      async function search() {
+        if (company.trim().length >= 2) {
+          setSearching(true);
+          try {
+            const response = await fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:8000"}/resolve?q=${encodeURIComponent(company)}`);
+            if (!response.ok) {
+              if (!cancelled) setResults([]);
+            } else {
+              const data = await response.json();
+              if (!cancelled) {
+                setResults(data.results || []);
+              }
+            }
+          } catch {
+            if (!cancelled) setResults([]);
+          } finally {
+            if (!cancelled) setSearching(false);
+          }
+        } else {
+          setResults([]);
+        }
+      }
+      search();
+      return () => { cancelled = true; };
+    }, 350);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
   }, [company]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (selected) {
       onSubmit(selected.symbol, selected.name, selected.exchange);
-    } else if (company.trim() && results.length > 0) {
-      onSubmit(results[0].symbol, results[0].name, results[0].exchange);
     }
   };
 
@@ -103,7 +114,7 @@ function CompanySetup({ onSubmit }) {
 
           <button
             type="submit"
-            disabled={!selected && (!company.trim() || results.length === 0)}
+            disabled={!selected}
             className="w-full mt-6 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed rounded-xl py-3 font-medium transition"
           >
             Start Analysis

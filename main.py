@@ -3,7 +3,6 @@ import logging
 import os
 import asyncio
 from contextlib import asynccontextmanager
-from typing import Optional
 
 from fastapi import FastAPI, Request, Query
 from fastapi.responses import StreamingResponse
@@ -16,7 +15,8 @@ from state import create_initial_state
 from user_input import search_tickers
 
 
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+# CORS: strip each origin
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")]
 
 # Rate limiting
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -54,7 +54,7 @@ app.add_middleware(
 
 class ChatTurn(BaseModel):
     role: str = Field(pattern=r"^(user|assistant)$")
-    content: str = Field(max_length=4000)
+    content: str = Field(max_length=20000)
 
 
 class AnalysisRequest(BaseModel):
@@ -73,7 +73,8 @@ def health_check():
 
 
 @app.get("/resolve")
-async def resolve(q: str = Query(min_length=1, max_length=80)):
+@limiter.limit("30/minute")
+async def resolve(request: Request, q: str = Query(min_length=1, max_length=80)):
     results = await asyncio.to_thread(search_tickers, q)
     return {"results": results}
 
