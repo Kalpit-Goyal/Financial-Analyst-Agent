@@ -29,6 +29,7 @@ function CompanySetup({ onSubmit }) {
           }
         } else {
           setResults([]);
+          setSearching(false);
         }
       }
       search();
