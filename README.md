@@ -152,7 +152,7 @@ Statement tools return an explicit shape so the model cannot mislabel a figure:
 - `graph.py` - Starts the MCP tool server, builds the LangGraph (analyst node, tool node, final_answer node), caches the compiled graph, and shuts the server down. Includes tool-call budget (max 6 per turn).
 - `analyst.py` - Creates the LLM, binds tools once, injects the system prompt (constant), and returns the assistant response. Uses async `ainvoke`.
 - `state.py` - Defines the shared LangGraph state shape (`AgentState` with company, ticker, messages). Provides `create_initial_state()` factory.
-- `user_input.py` - Resolves a company name to ticker candidates using Yahoo Finance search (cached, `@lru_cache(256)`). Legacy `get_ticker` kept for compatibility.
+- `user_input.py` - Resolves a company name to ticker candidates using Yahoo Finance search (15-minute dict cache, case-insensitive). Returns top 5 equity results with symbol, name, exchange.
 - `requirements.txt` - Python dependencies for the backend and MCP server (pinned versions).
 
 ### MCP server files
@@ -184,7 +184,7 @@ The React app starts in `frontend/src/main.jsx`, which renders `frontend/src/App
 Inside `CompanySetup`:
 
 1. User types a company name (e.g., "NVIDIA").
-2. On each keystroke (debounced by React), `/resolve?q=` is called.
+2. On each keystroke, `/resolve?q=` is called with a 350 ms debounce timer.
 3. Results show as clickable cards with name, symbol, and exchange.
 4. User clicks the correct one, then "Start Analysis".
 
@@ -254,8 +254,7 @@ The backend entry point is `main.py`.
 
 ### `user_input.py`
 - Uses Yahoo Finance search to find matching tickers for the selected company.
-- Cached with `@lru_cache(256)`, returns top 5 equity results with symbol, name, exchange.
-- Legacy `get_ticker` function kept for backward compatibility.
+- 15-minute dict cache (case-insensitive), returns top 5 equity results with symbol, name, exchange.
 
 ### `mcp_server/financial_tools.py`
 - Defines the MCP server with `FastMCP`.
@@ -355,7 +354,7 @@ Copy `.env.example` to `.env` and fill in the values. See `.env.example` for the
 - `GROQ_MODEL` - the Groq model to use (defaults to `openai/gpt-oss-120b`).
 - `ALLOWED_ORIGINS` - comma-separated CORS origins (default `http://localhost:5173`).
 - `MCP_HOST` / `MCP_PORT` - host and port for the local MCP tool server (default `127.0.0.1:8931`).
-- `MCP_TRANSPORT` - `stdio` or `streamable-http` (default `stdio`).
+- `MCP_TRANSPORT` - set internally (streamable-http with stdio fallback); don't set manually.
 - `MCP_STARTUP_TIMEOUT` - seconds to wait for HTTP server before fallback (default `20`).
 - `FIN_TOOL_PERIODS` - how many recent reporting periods each statement tool returns (default `8`).
 - `FIN_TOOL_CACHE_TTL` - seconds to cache financial data in the tool server (default `900`).

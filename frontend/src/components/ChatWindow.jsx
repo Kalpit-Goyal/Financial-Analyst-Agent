@@ -25,6 +25,13 @@ function ChatWindow({ company, ticker }) {
     scrollToBottom("auto");
   }, [messages, scrollToBottom]);
 
+  // Abort in-flight request on unmount
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
+
   const updateLastMessage = useCallback((fn) => {
     setMessages((prev) => {
       if (prev.length === 0) return prev;

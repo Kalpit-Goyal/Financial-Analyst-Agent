@@ -1,18 +1,14 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 
 function CompanySetup({ onSubmit }) {
   const [company, setCompany] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [selected, setSelected] = useState(null);
-  const debounceRef = useRef(null);
 
   useEffect(() => {
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current);
-    }
-    debounceRef.current = setTimeout(() => {
-      let cancelled = false;
+    let cancelled = false;
+    const timer = setTimeout(() => {
       async function search() {
         if (company.trim().length >= 2) {
           setSearching(true);
@@ -36,10 +32,11 @@ function CompanySetup({ onSubmit }) {
         }
       }
       search();
-      return () => { cancelled = true; };
     }, 350);
+
     return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
+      cancelled = true;
+      clearTimeout(timer);
     };
   }, [company]);
 

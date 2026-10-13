@@ -429,7 +429,6 @@ async def get_market_data(ticker: str) -> dict:
 
 
 if __name__ == "__main__":
-    import asyncio
     transport = os.getenv("MCP_TRANSPORT", "stdio")
     if transport == "stdio":
         mcp.run()
