@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 
-function CompanySetup({ onSubmit }) {
+function CompanySetup({ onSubmit, onOpenMonitor }) {
   const [company, setCompany] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -122,6 +122,15 @@ function CompanySetup({ onSubmit }) {
         <p className="text-center text-xs text-gray-400 mt-5">
           Enter a company name to begin your analysis
         </p>
+
+        {onOpenMonitor && (
+          <p className="text-center text-sm text-gray-500 mt-8">
+            Want alerts without asking?{" "}
+            <button type="button" onClick={onOpenMonitor} className="text-blue-600 hover:text-blue-500 font-medium">
+              Open the autonomous monitor
+            </button>
+          </p>
+        )}
       </div>
     </div>
   );

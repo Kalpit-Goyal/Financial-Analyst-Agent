@@ -17,7 +17,7 @@ MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
 MCP_PORT = int(os.getenv("MCP_PORT", "8931"))
 SERVER_STARTUP_TIMEOUT = float(os.getenv("MCP_STARTUP_TIMEOUT", "20"))
 
-MAX_TOOL_CALLS = 6
+MAX_TOOL_CALLS = 8
 
 _graph = None
 _server = None

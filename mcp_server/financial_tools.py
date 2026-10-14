@@ -1,5 +1,7 @@
+import ast
 import asyncio
 import math
+import operator
 import os
 import re
 import time
@@ -425,6 +427,57 @@ async def get_market_data(ticker: str) -> dict:
             "error": f"{type(exc).__name__}: {exc}",
             "retryable": False,
             "advice": "Report this data as unavailable. Do not retry.",
+        }
+
+
+# ---------------------------------------------------------------- calculator
+
+_BIN_OPS = {
+    ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+    ast.Div: operator.truediv, ast.Pow: operator.pow, ast.Mod: operator.mod,
+}
+_UNARY_OPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+MAX_EXPRESSION_LENGTH = 200
+
+
+def safe_eval(expression: str) -> float:
+    """Evaluate plain arithmetic without eval(): numbers, + - * / ** % and parentheses only."""
+    if len(expression) > MAX_EXPRESSION_LENGTH:
+        raise ValueError("Expression is too long")
+
+    def ev(node):
+        if isinstance(node, ast.Expression):
+            return ev(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) \
+                and not isinstance(node.value, bool):
+            return node.value
+        if isinstance(node, ast.BinOp) and type(node.op) in _BIN_OPS:
+            left, right = ev(node.left), ev(node.right)
+            if isinstance(node.op, ast.Pow) and abs(right) > 100:
+                raise ValueError("Exponent is too large")
+            return _BIN_OPS[type(node.op)](left, right)
+        if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARY_OPS:
+            return _UNARY_OPS[type(node.op)](ev(node.operand))
+        raise ValueError("Only numbers and + - * / ** % ( ) are allowed")
+
+    result = ev(ast.parse(expression.strip(), mode="eval"))
+    if not math.isfinite(result):
+        raise ValueError("Result is not a finite number")
+    return result
+
+
+@mcp.tool()
+def calculate(expression: str) -> dict:
+    """Evaluate an arithmetic expression exactly. Use this for EVERY ratio, margin, growth
+    rate or other derived figure instead of computing it yourself.
+    Example: (394.3 - 365.8) / 365.8 * 100 gives year-over-year growth in percent."""
+    try:
+        return {"expression": expression, "result": round(float(safe_eval(expression)), 6)}
+    except (ValueError, SyntaxError, ZeroDivisionError, OverflowError, TypeError) as exc:
+        return {
+            "expression": expression,
+            "error": f"{type(exc).__name__}: {exc}",
+            "advice": "Use only numbers and + - * / ** % ( ).",
         }
 
 

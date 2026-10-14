@@ -13,17 +13,18 @@ from langchain_core.messages import AIMessageChunk
 from graph import create_graph, close_graph
 from state import create_initial_state
 from user_input import search_tickers
+from monitor.api import router as monitor_router
+from monitor.db import init_db
 
 
 # CORS: strip each origin
 ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")]
 
-# Rate limiting
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+# Rate limiting (limiter lives in ratelimit.py so routers can share it)
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-limiter = Limiter(key_func=get_remote_address)
+from ratelimit import limiter
 
 
 # Fail fast at startup
@@ -33,6 +34,11 @@ if not os.getenv("GROQ_API_KEY"):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    try:
+        await asyncio.to_thread(init_db)
+    except Exception:
+        # Chat keeps working; only the owner-only monitor endpoints need the database.
+        logger.exception("database init failed; watchlist and monitor are unavailable")
     yield
     await close_graph()
 
@@ -47,9 +53,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+
+
+app.include_router(monitor_router)
 
 
 class ChatTurn(BaseModel):

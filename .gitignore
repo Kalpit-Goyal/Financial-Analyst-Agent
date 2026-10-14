@@ -36,3 +36,7 @@ Thumbs.db
 # Coverage
 .coverage
 htmlcov/
+# local monitor database
+watchlist.db
+.venv/
+.pytest_cache/

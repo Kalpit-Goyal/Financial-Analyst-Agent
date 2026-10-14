@@ -144,6 +144,79 @@ Statement tools return an explicit shape so the model cannot mislabel a figure:
 - Empty statements return a `note` instead of an error.
 - Any other exception returns `{"error": ..., "ticker": ...}` with `retryable: false`.
 
+## Autonomous Monitor
+
+Beyond answering questions, the project runs as an autonomous agent. On a schedule (and on demand) it
+watches a personal watchlist, decides what is worth investigating, researches it with the same analyst
+agent and tools used in the chat, fact-checks its own write-up, and sends an alert.
+
+```mermaid
+flowchart LR
+    S[Schedule / Run now] --> L[Load watchlist]
+    L --> SC[Scan prices and earnings<br/>deterministic, no LLM]
+    SC --> T{Triage<br/>LLM decides what to escalate}
+    T -->|nothing worth it| F[Finish and log]
+    T --> I[Investigate<br/>analyst agent + MCP tools]
+    I --> C[Compose structured brief]
+    C --> K{Critic<br/>checks every claim against tool data}
+    K -->|rejected, up to 2 rewrites| I
+    K -->|approved| A[Send Telegram alert]
+    K -->|still failing| U[Send signals only,<br/>withhold the analysis]
+    A --> F
+    U --> F
+```
+
+What makes it agentic rather than a chatbot:
+
+- **Autonomous trigger.** A cron job wakes it up; nobody types a question.
+- **Judgment about when to act.** Deterministic triggers (large moves, earnings soon) pick candidates,
+  a cooldown prevents repeat alerts, and an LLM triage step decides which candidates deserve the cost of a deep dive.
+- **Real action.** It sends Telegram alerts and writes every decision to a database.
+- **Verification loop.** A separate critic step checks the brief against the raw tool output. A rejected
+  brief is sent back to the analyst with the specific problems. If it never passes, only the computed
+  market signals are sent and the model's text is withheld.
+- **Code does the arithmetic.** The `calculate` MCP tool evaluates every ratio and growth figure so the model does not guess at math.
+- **Self-evaluation.** Each alert records the price and the model's stance. After `MONITOR_OUTCOME_DAYS`
+  days the outcome is scored, giving a running hit rate and average return (neutral and unverified alerts are not scored).
+- **Safe failure.** If a run crashes, or no ticker can be priced, the run is marked failed and you are notified instead of getting silence.
+
+### Setup
+
+1. **Database.** Create a free Postgres database (for example on Neon) and copy its connection string into
+   `DATABASE_URL` on the backend host and as a GitHub Actions secret. Without it a local SQLite file is used, which free hosts wipe on redeploy.
+2. **Owner token.** Generate a long random value for `OWNER_TOKEN` (see `.env.example`) and set it on the backend. You paste it once into the Monitor page. Without it the owner endpoints are disabled.
+3. **Telegram.** Create a bot with `@BotFather`, send it a message, then open
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` to find your chat id. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`. Without them alerts are only logged.
+4. **GitHub secrets** (repo Settings, Secrets and variables, Actions): `DATABASE_URL`, `GROQ_API_KEY`,
+   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. The workflow `.github/workflows/monitor.yml` runs weekdays after the Indian and US market closes.
+5. Open the app, choose **Autonomous monitor**, enter the token, add tickers, and press **Run scan now** to test.
+
+Run it from a terminal with `python -m monitor.cli run` (scan), `evaluate` (score old alerts) or `all`.
+
+Notes: scheduled workflows on public repositories are paused by GitHub after 60 days without repository
+activity. Yahoo Finance sometimes rate limits shared cloud IPs; if that happens the run fails loudly (you get a Telegram message)
+and you can trigger `POST /monitor/run` from the backend host instead. On Groq's free tier keep the watchlist small or lower
+`MONITOR_MAX_INVESTIGATIONS`, because each investigation makes several model calls.
+
+### Monitor API (owner only, `Authorization: Bearer <OWNER_TOKEN>`)
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /watchlist`, `POST /watchlist`, `DELETE /watchlist/{ticker}` | Manage the watchlist (max 25 tickers) |
+| `POST /monitor/run` | Start a scan in the background (409 if one is already running) |
+| `GET /monitor/runs`, `GET /monitor/alerts` | Run history and alert history |
+| `GET /monitor/stats` | Track record: alerts, scored, hit rate, average signed return |
+
+### Monitor files
+
+- `monitor/signals.py` - price and earnings signals and the trigger rules (pure functions, no LLM).
+- `monitor/agents.py` - triage, compose and critic steps with retries and safe fallbacks.
+- `monitor/graph.py` - the LangGraph workflow above.
+- `monitor/db.py` - watchlist, runs and alerts (SQLAlchemy; SQLite or Postgres).
+- `monitor/notify.py` - Telegram delivery (log-only fallback) and alert formatting.
+- `monitor/outcomes.py` - scores past alerts against the actual price move.
+- `monitor/runner.py`, `monitor/cli.py`, `monitor/api.py` - entry points: scheduled, command line and HTTP.
+
 ## Project Structure
 
 ### Root backend files
@@ -356,6 +429,10 @@ Copy `.env.example` to `.env` and fill in the values. See `.env.example` for the
 - `MCP_HOST` / `MCP_PORT` - host and port for the local MCP tool server (default `127.0.0.1:8931`).
 - `MCP_TRANSPORT` - set internally (streamable-http with stdio fallback); don't set manually.
 - `MCP_STARTUP_TIMEOUT` - seconds to wait for HTTP server before fallback (default `20`).
+- `DATABASE_URL` - Postgres/SQLite URL for the watchlist and alerts (defaults to a local SQLite file).
+- `OWNER_TOKEN` - bearer token for the watchlist and monitor endpoints (they are disabled if unset).
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` - where alerts are delivered (log-only if unset).
+- `MONITOR_*` - optional thresholds and limits, listed in `.env.example`.
 - `FIN_TOOL_PERIODS` - how many recent reporting periods each statement tool returns (default `8`).
 - `FIN_TOOL_CACHE_TTL` - seconds to cache financial data in the tool server (default `900`).
 - `FIN_TOOL_RETRY_BACKOFF` - seconds to wait before retrying once after a rate limit (default `3`).

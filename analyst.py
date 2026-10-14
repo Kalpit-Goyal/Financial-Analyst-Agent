@@ -15,7 +15,7 @@ load_dotenv()
 @lru_cache(maxsize=1)
 def get_llm():
     return ChatGroq(
-        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        model=os.getenv("GROQ_MODEL") or "openai/gpt-oss-120b",
         api_key=os.getenv("GROQ_API_KEY"),
     )
 
@@ -35,6 +35,7 @@ SYSTEM_PROMPT = textwrap.dedent("""
     You may call a statement tool once per period type (annual and quarterly).
     If a result contains "retryable": false, stop calling that tool and tell the user the data is unavailable.
     State the currency and period for every figure.
+    Use the calculate tool for every ratio, margin, growth rate or other derived number; do not do arithmetic yourself.
 """)
 
 

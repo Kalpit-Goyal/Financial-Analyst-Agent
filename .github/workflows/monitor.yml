@@ -1,0 +1,55 @@
+name: Monitor
+
+# Runs the autonomous monitor on a schedule: scores old alerts, scans the watchlist,
+# investigates anything unusual, fact-checks the result, and sends Telegram alerts.
+# Times are UTC: 10:30 is after the Indian close, 22:00 is after the US close (any DST).
+on:
+  schedule:
+    - cron: "30 10 * * 1-5"
+    - cron: "0 22 * * 1-5"
+  workflow_dispatch:
+
+concurrency:
+  group: monitor
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check required secrets
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Add the DATABASE_URL secret. Without a shared database the runner would scan an empty, throwaway watchlist."
+            exit 1
+          fi
+          if [ -z "$GROQ_API_KEY" ]; then
+            echo "::error::Add the GROQ_API_KEY secret."
+            exit 1
+          fi
+
+      - name: Score past alerts, then scan the watchlist
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GROQ_MODEL: ${{ vars.GROQ_MODEL }}
+          MONITOR_GROQ_MODEL: ${{ vars.MONITOR_GROQ_MODEL }}
+        run: python -m monitor.cli all

@@ -8,7 +8,7 @@ const SUGGESTIONS = [
   { title: "Balance sheet", subtitle: "Analyze assets and liabilities", question: "Analyze the company's balance sheet." },
 ];
 
-function ChatWindow({ company, ticker }) {
+function ChatWindow({ company, ticker, onOpenMonitor }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -210,6 +210,14 @@ function ChatWindow({ company, ticker }) {
               Financial Analysis
             </p>
           </div>
+          {onOpenMonitor && (
+            <button
+              onClick={onOpenMonitor}
+              className="ml-auto text-sm text-blue-600 hover:text-blue-500 font-medium"
+            >
+              Autonomous monitor
+            </button>
+          )}
         </header>
 
         {/* Conversation */}
