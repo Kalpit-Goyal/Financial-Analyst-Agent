@@ -1,54 +1,11 @@
-import { useEffect, useState } from "react";
-import { api } from "../lib/api";
+import { useState } from "react";
 import { formatTime } from "../lib/format";
-import { EmptyState, ErrorBanner, Icon, Spinner } from "./ui";
-
-function useTickerSearch(query) {
-  const [results, setResults] = useState([]);
-  const [searching, setSearching] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    const timer = setTimeout(async () => {
-      const trimmed = query.trim();
-      if (trimmed.length < 2) {
-        if (!cancelled) {
-          setResults([]);
-          setSearching(false);
-        }
-        return;
-      }
-      setSearching(true);
-      try {
-        const data = await api(`/resolve?q=${encodeURIComponent(trimmed)}`);
-        if (!cancelled) {
-          setResults(data.results || []);
-          setError("");
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setResults([]);
-          setError(err.message);
-        }
-      } finally {
-        if (!cancelled) setSearching(false);
-      }
-    }, 350);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [query]);
-
-  return { results, searching, error };
-}
+import TickerSearch from "./TickerSearch";
+import { EmptyState, Icon } from "./ui";
 
 export default function NewAnalysis({ onSubmit, conversations = [], onOpenConversation }) {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(null);
-  const { results, searching, error } = useTickerSearch(query);
 
   const start = (event) => {
     event.preventDefault();
@@ -73,66 +30,17 @@ export default function NewAnalysis({ onSubmit, conversations = [], onOpenConver
 
       <form onSubmit={start} className="mt-8 animate-fade-up">
         <div className="panel p-2">
-          <div className="relative">
-            <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">
-              <Icon name="search" className="h-4 w-4" />
-            </span>
-            <input
-              autoFocus
-              type="text"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setSelected(null);
-              }}
-              placeholder="Company name or ticker, e.g. NVIDIA or RELIANCE.NS"
-              aria-label="Search for a company"
-              className="w-full rounded-xl border border-transparent bg-transparent py-3.5 pl-11 pr-10 text-sm text-slate-100 placeholder-slate-500 outline-none focus:border-indigo-400/50"
-            />
-            {searching && (
-              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-indigo-300">
-                <Spinner />
-              </span>
-            )}
-          </div>
-
-          {results.length > 0 && (
-            <div className="mt-1 max-h-64 space-y-1 overflow-y-auto border-t border-white/[0.06] pt-2">
-              {results.map((result) => (
-                <button
-                  key={result.symbol}
-                  type="button"
-                  onClick={() => setSelected(result)}
-                  className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition ${
-                    selected?.symbol === result.symbol
-                      ? "bg-indigo-500/15 ring-1 ring-inset ring-indigo-400/40"
-                      : "hover:bg-white/[0.04]"
-                  }`}
-                >
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-[10px] font-bold text-indigo-300">
-                    {result.symbol.slice(0, 4)}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium text-slate-200">
-                      {result.name}
-                      <span className="ml-2 text-xs font-normal text-slate-500">{result.symbol}</span>
-                    </span>
-                    <span className="block text-xs text-slate-500">{result.exchange}</span>
-                  </span>
-                  {selected?.symbol === result.symbol && (
-                    <Icon name="check" className="h-4 w-4 shrink-0 text-indigo-300" />
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
+          <TickerSearch
+            autoFocus
+            query={query}
+            onQueryChange={(value) => {
+              setQuery(value);
+              setSelected(null);
+            }}
+            selected={selected}
+            onSelect={setSelected}
+          />
         </div>
-
-        {error && (
-          <div className="mt-3">
-            <ErrorBanner>{error}</ErrorBanner>
-          </div>
-        )}
 
         <button type="submit" disabled={!selected} className="btn-primary mt-4 w-full py-3">
           <Icon name="chart" className="h-4 w-4" />

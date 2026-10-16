@@ -265,13 +265,15 @@ Every endpoint is scoped to the signed-in account. The session token comes from 
 - `frontend/src/lib/api.js` - API client: session token storage, JSON requests, error mapping, and the NDJSON stream reader for `/analyze`.
 - `frontend/src/lib/auth-context.js` - Auth context and `useAuth` hook.
 - `frontend/src/lib/format.js` - Small formatting helpers (timestamps, avatar initials).
+- `frontend/src/lib/use-ticker-search.js` - Debounced company/ticker search hook backed by `/resolve`.
 - `frontend/src/components/AuthProvider.jsx` - Restores the session and exposes login/register/logout.
 - `frontend/src/components/AuthScreen.jsx` - Split-screen brand panel plus sign-in / create-account form.
 - `frontend/src/components/Sidebar.jsx` - Navigation, conversation history list with delete, and the account footer.
-- `frontend/src/components/NewAnalysis.jsx` - Company search with debounced `/resolve`, listing confirmation, and recent conversations.
+- `frontend/src/components/NewAnalysis.jsx` - Analysis start screen: shared ticker search, listing confirmation, and recent conversations.
+- `frontend/src/components/TickerSearch.jsx` - Reusable company/ticker search box with live `/resolve` suggestions; used by the analysis start screen and the watchlist form.
 - `frontend/src/components/ChatPanel.jsx` - Chat interface: streaming, tool chips, cancellation, saved-history loading, suggestions, and composer.
 - `frontend/src/components/MessageBubble.jsx` - User/assistant message rendering with tool chips and streaming cursor.
-- `frontend/src/components/Markdown.jsx` - Dark-themed markdown renderer (tables, lists, code, blockquotes).
+- `frontend/src/components/Markdown.jsx` - Dark-themed markdown renderer (tables, lists, code, blockquotes, KaTeX math).
 - `frontend/src/components/MonitorPanel.jsx` - Watchlist management, scan trigger, track-record stats, alerts and run history.
 - `frontend/src/components/ui.jsx` - Shared primitives: icons, logo, spinner, field, badge, empty state, error banner.
 
@@ -303,8 +305,9 @@ Inside `ChatPanel`:
 Inside `MonitorPanel`:
 
 1. It loads the watchlist, runs, alerts and stats for the signed-in account in parallel.
-2. "Run scan now" starts `POST /monitor/run`; while a run is active the panel polls every 4 seconds.
-3. Alerts show stance, fact-check status, triggers and the scored outcome after the horizon.
+2. Adding a ticker uses the same company search as the analysis start screen, so you can search by name instead of remembering the symbol.
+3. "Run scan now" starts `POST /monitor/run`; while a run is active the panel polls every 4 seconds.
+4. Alerts show stance, fact-check status, triggers and the scored outcome after the horizon.
 
 ## How the Backend Works
 
@@ -407,6 +410,7 @@ The backend entry point is `main.py`.
 
 ### `frontend/src/components/Markdown.jsx`
 - Uses `react-markdown` and `remark-gfm` with dark-theme components for tables, lists, code and blockquotes.
+- Renders LaTeX math with `remark-math` + `rehype-katex`. The model's `\[...\]` and `\(...\)` delimiters are normalized to `$$...$$`; single-dollar math stays disabled so currency amounts are never misparsed.
 
 ### `frontend/src/main.jsx`
 - Mounts the React app into the root DOM node.

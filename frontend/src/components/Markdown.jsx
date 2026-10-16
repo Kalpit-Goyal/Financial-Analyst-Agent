@@ -1,5 +1,23 @@
 import ReactMarkdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import "katex/dist/katex.min.css";
+
+const DISPLAY_MATH = /\\\[([\s\S]+?)\\\]/g;
+const INLINE_MATH = /\\\(([\s\S]+?)\\\)/g;
+
+/**
+ * The model writes LaTeX with \[...\] and \(...\) delimiters, while remark-math
+ * expects $$...$$. Normalize the delimiters before parsing. Single-dollar math
+ * stays disabled so currency amounts like "$215 billion" never turn into math.
+ */
+function normalizeMath(source) {
+  if (typeof source !== "string") return source;
+  return source
+    .replace(DISPLAY_MATH, (_, body) => `\n\n$$\n${body.trim()}\n$$\n\n`)
+    .replace(INLINE_MATH, (_, body) => `$$${body.trim()}$$`);
+}
 
 const COMPONENTS = {
   h1: ({ children }) => <h1 className="mb-4 mt-2 text-xl font-bold text-white sm:text-2xl">{children}</h1>,
@@ -62,8 +80,12 @@ const COMPONENTS = {
 
 export default function Markdown({ children }) {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={COMPONENTS}>
-      {children}
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]}
+      rehypePlugins={[rehypeKatex]}
+      components={COMPONENTS}
+    >
+      {normalizeMath(children)}
     </ReactMarkdown>
   );
 }

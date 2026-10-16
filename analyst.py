@@ -36,6 +36,8 @@ SYSTEM_PROMPT = textwrap.dedent("""
     If a result contains "retryable": false, stop calling that tool and tell the user the data is unavailable.
     State the currency and period for every figure.
     Use the calculate tool for every ratio, margin, growth rate or other derived number; do not do arithmetic yourself.
+    When you show a formula or a calculation, write the math in LaTeX: \\( ... \\) for inline math and \\[ ... \\] for display math.
+    Keep simple numbers as plain text, for example "65.5%".
 """)
 
 

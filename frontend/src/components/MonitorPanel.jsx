@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
 import { formatTime } from "../lib/format";
+import TickerSearch from "./TickerSearch";
 import { Badge, EmptyState, ErrorBanner, Icon, Spinner } from "./ui";
 
 const TICKER_PATTERN = /^[A-Za-z0-9.\-^=]{1,15}$/;
@@ -84,7 +85,8 @@ export default function MonitorPanel({ onOpenAnalysis }) {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [ticker, setTicker] = useState("");
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState(null);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -154,9 +156,9 @@ export default function MonitorPanel({ onOpenAnalysis }) {
 
   const addTicker = (event) => {
     event.preventDefault();
-    const symbol = ticker.trim().toUpperCase();
-    if (!TICKER_PATTERN.test(symbol)) {
-      setError("Enter a ticker symbol such as NVDA or RELIANCE.NS.");
+    const symbol = (selected?.symbol ?? query.trim()).toUpperCase();
+    if (!selected && !TICKER_PATTERN.test(symbol)) {
+      setError("Search for a company first, or enter a ticker symbol such as NVDA or RELIANCE.NS.");
       return;
     }
     act(async () => {
@@ -164,7 +166,8 @@ export default function MonitorPanel({ onOpenAnalysis }) {
         method: "POST",
         body: { ticker: symbol, note: note.trim() || null },
       });
-      setTicker("");
+      setQuery("");
+      setSelected(null);
       setNote("");
     });
   };
@@ -238,26 +241,29 @@ export default function MonitorPanel({ onOpenAnalysis }) {
             </div>
 
             <form onSubmit={addTicker} className="panel mb-3 space-y-2 p-3">
-              <div className="flex gap-2">
-                <input
-                  value={ticker}
-                  onChange={(e) => setTicker(e.target.value)}
-                  placeholder="Ticker, e.g. NVDA"
-                  aria-label="Ticker"
-                  className="input-dark w-32 sm:w-40"
-                />
-                <input
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  placeholder="Why you watch it (optional)"
-                  aria-label="Note"
-                  maxLength={500}
-                  className="input-dark flex-1"
-                />
-              </div>
-              <button type="submit" disabled={busy || !ticker.trim()} className="btn-ghost w-full">
+              <TickerSearch
+                query={query}
+                onQueryChange={(value) => {
+                  setQuery(value);
+                  setSelected(null);
+                }}
+                selected={selected}
+                onSelect={setSelected}
+                placeholder="Company name or ticker, e.g. NVDA"
+                ariaLabel="Search for a company to add"
+                inputClassName="input-dark pl-10"
+              />
+              <input
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Why you watch it (optional)"
+                aria-label="Note"
+                maxLength={500}
+                className="input-dark"
+              />
+              <button type="submit" disabled={busy || !query.trim()} className="btn-ghost w-full">
                 <Icon name="plus" className="h-4 w-4" />
-                Add to watchlist
+                {selected ? `Add ${selected.symbol} to watchlist` : "Add to watchlist"}
               </button>
             </form>
 
