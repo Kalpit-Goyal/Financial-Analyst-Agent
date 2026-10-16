@@ -24,7 +24,7 @@ index 6a1b2b3..1f96a1a 100644
  # Telegram alerts. Create a bot with @BotFather, then message it and read your chat id.
  # If either is empty, alerts are only written to the log.
 diff --git a/README.md b/README.md
-index 6f77cb5..75cd6bc 100644
+index 6f77cb5..9c73b4e 100644
 --- a/README.md
 +++ b/README.md
 @@ -1,13 +1,13 @@
@@ -195,7 +195,7 @@ index 6f77cb5..75cd6bc 100644
  - `graph.py` - Starts the MCP tool server, builds the LangGraph (analyst node, tool node, final_answer node), caches the compiled graph, and shuts the server down. Includes tool-call budget (max 6 per turn).
  - `analyst.py` - Creates the LLM, binds tools once, injects the system prompt (constant), and returns the assistant response. Uses async `ainvoke`.
  - `state.py` - Defines the shared LangGraph state shape (`AgentState` with company, ticker, messages). Provides `create_initial_state()` factory.
-@@ -237,39 +258,53 @@ and you can trigger `POST /monitor/run` from the backend host instead. On Groq's
+@@ -237,39 +258,56 @@ and you can trigger `POST /monitor/run` from the backend host instead. On Groq's
  - `frontend/package.json` - Frontend scripts and package dependencies.
  - `frontend/vite.config.js` - Vite configuration with React and Tailwind support.
  - `frontend/eslint.config.js` - ESLint configuration for JavaScript and JSX.
@@ -212,13 +212,15 @@ index 6f77cb5..75cd6bc 100644
 +- `frontend/src/lib/api.js` - API client: session token storage, JSON requests, error mapping, and the NDJSON stream reader for `/analyze`.
 +- `frontend/src/lib/auth-context.js` - Auth context and `useAuth` hook.
 +- `frontend/src/lib/format.js` - Small formatting helpers (timestamps, avatar initials).
++- `frontend/src/lib/use-ticker-search.js` - Debounced company/ticker search hook backed by `/resolve`.
 +- `frontend/src/components/AuthProvider.jsx` - Restores the session and exposes login/register/logout.
 +- `frontend/src/components/AuthScreen.jsx` - Split-screen brand panel plus sign-in / create-account form.
 +- `frontend/src/components/Sidebar.jsx` - Navigation, conversation history list with delete, and the account footer.
-+- `frontend/src/components/NewAnalysis.jsx` - Company search with debounced `/resolve`, listing confirmation, and recent conversations.
++- `frontend/src/components/NewAnalysis.jsx` - Analysis start screen: shared ticker search, listing confirmation, and recent conversations.
++- `frontend/src/components/TickerSearch.jsx` - Reusable company/ticker search box with live `/resolve` suggestions; used by the analysis start screen and the watchlist form.
 +- `frontend/src/components/ChatPanel.jsx` - Chat interface: streaming, tool chips, cancellation, saved-history loading, suggestions, and composer.
 +- `frontend/src/components/MessageBubble.jsx` - User/assistant message rendering with tool chips and streaming cursor.
-+- `frontend/src/components/Markdown.jsx` - Dark-themed markdown renderer (tables, lists, code, blockquotes).
++- `frontend/src/components/Markdown.jsx` - Dark-themed markdown renderer (tables, lists, code, blockquotes, KaTeX math).
 +- `frontend/src/components/MonitorPanel.jsx` - Watchlist management, scan trigger, track-record stats, alerts and run history.
 +- `frontend/src/components/ui.jsx` - Shared primitives: icons, logo, spinner, field, badge, empty state, error banner.
  
@@ -263,12 +265,13 @@ index 6f77cb5..75cd6bc 100644
 +Inside `MonitorPanel`:
 +
 +1. It loads the watchlist, runs, alerts and stats for the signed-in account in parallel.
-+2. "Run scan now" starts `POST /monitor/run`; while a run is active the panel polls every 4 seconds.
-+3. Alerts show stance, fact-check status, triggers and the scored outcome after the horizon.
++2. Adding a ticker uses the same company search as the analysis start screen, so you can search by name instead of remembering the symbol.
++3. "Run scan now" starts `POST /monitor/run`; while a run is active the panel polls every 4 seconds.
++4. Alerts show stance, fact-check status, triggers and the scored outcome after the horizon.
  
  ## How the Backend Works
  
-@@ -277,12 +312,16 @@ The backend entry point is `main.py`.
+@@ -277,12 +315,16 @@ The backend entry point is `main.py`.
  
  ### Request flow
  
@@ -291,7 +294,7 @@ index 6f77cb5..75cd6bc 100644
  
  ### Why the graph is built once and reused
  
-@@ -290,20 +329,34 @@ The backend entry point is `main.py`.
+@@ -290,20 +332,34 @@ The backend entry point is `main.py`.
  
  ### Security & Reliability
  
@@ -330,7 +333,7 @@ index 6f77cb5..75cd6bc 100644
  
  ### `graph.py`
  - Creates a `MultiServerMCPClient` that launches `mcp_server/financial_tools.py`.
-@@ -339,39 +392,55 @@ The backend entry point is `main.py`.
+@@ -339,39 +395,56 @@ The backend entry point is `main.py`.
  - Fetches `financialCurrency` from `get_info()` and includes `currency` in statement outputs.
  - Runs as a persistent Streamable HTTP server, or over stdio if requested.
  
@@ -368,6 +371,7 @@ index 6f77cb5..75cd6bc 100644
 +
 +### `frontend/src/components/Markdown.jsx`
 +- Uses `react-markdown` and `remark-gfm` with dark-theme components for tables, lists, code and blockquotes.
++- Renders LaTeX math with `remark-math` + `rehype-katex`. The model's `\[...\]` and `\(...\)` delimiters are normalized to `$$...$$`; single-dollar math stays disabled so currency amounts are never misparsed.
  
  ### `frontend/src/main.jsx`
  - Mounts the React app into the root DOM node.
@@ -406,7 +410,7 @@ index 6f77cb5..75cd6bc 100644
  ### `GET /resolve?q=`
  Search for equity tickers matching a query.
  
-@@ -412,11 +481,25 @@ Constraints:
+@@ -412,11 +485,25 @@ Constraints:
  Response: NDJSON stream (one JSON object per line)
  - `{"type": "token", "content": "..."}` — a chunk of the assistant's response text
  - `{"type": "tool_call", "tool": "get_financials"}` — a tool was called
@@ -433,7 +437,7 @@ index 6f77cb5..75cd6bc 100644
  ## Environment Variables
  
  Copy `.env.example` to `.env` and fill in the values. See `.env.example` for the full list with defaults.
-@@ -429,8 +512,8 @@ Copy `.env.example` to `.env` and fill in the values. See `.env.example` for the
+@@ -429,8 +516,8 @@ Copy `.env.example` to `.env` and fill in the values. See `.env.example` for the
  - `MCP_HOST` / `MCP_PORT` - host and port for the local MCP tool server (default `127.0.0.1:8931`).
  - `MCP_TRANSPORT` - set internally (streamable-http with stdio fallback); don't set manually.
  - `MCP_STARTUP_TIMEOUT` - seconds to wait for HTTP server before fallback (default `20`).
@@ -444,6 +448,19 @@ index 6f77cb5..75cd6bc 100644
  - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` - where alerts are delivered (log-only if unset).
  - `MONITOR_*` - optional thresholds and limits, listed in `.env.example`.
  - `FIN_TOOL_PERIODS` - how many recent reporting periods each statement tool returns (default `8`).
+diff --git a/analyst.py b/analyst.py
+index 0f8b489..3d36365 100644
+--- a/analyst.py
++++ b/analyst.py
+@@ -36,6 +36,8 @@ SYSTEM_PROMPT = textwrap.dedent("""
+     If a result contains "retryable": false, stop calling that tool and tell the user the data is unavailable.
+     State the currency and period for every figure.
+     Use the calculate tool for every ratio, margin, growth rate or other derived number; do not do arithmetic yourself.
++    When you show a formula or a calculation, write the math in LaTeX: \\( ... \\) for inline math and \\[ ... \\] for display math.
++    Keep simple numbers as plain text, for example "65.5%".
+ """)
+ 
+ 
 diff --git a/auth.py b/auth.py
 new file mode 100644
 index 0000000..c425304
@@ -595,6 +612,512 @@ index d56ce4b..a5528ab 100644
      <title>Financial Analyst</title>
    </head>
    <body>
+diff --git a/frontend/package-lock.json b/frontend/package-lock.json
+index 3972a70..c8c8ccf 100644
+--- a/frontend/package-lock.json
++++ b/frontend/package-lock.json
+@@ -9,10 +9,13 @@
+       "version": "0.0.0",
+       "dependencies": {
+         "@tailwindcss/vite": "^4.3.3",
++        "katex": "^0.19.0",
+         "react": "^19.2.8",
+         "react-dom": "^19.2.8",
+         "react-markdown": "^10.1.0",
++        "rehype-katex": "^7.0.1",
+         "remark-gfm": "^4.0.1",
++        "remark-math": "^6.0.0",
+         "tailwindcss": "^4.3.3"
+       },
+       "devDependencies": {
+@@ -1299,6 +1302,12 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/@types/katex": {
++      "version": "0.16.8",
++      "resolved": "https://registry.npmjs.org/@types/katex/-/katex-0.16.8.tgz",
++      "integrity": "sha512-trgaNyfU+Xh2Tc+ABIb44a5AYUpicB3uwirOioeOkNPPbmgRNtcWyDeeFRzjPZENO9Vq8gvVqfhaaXWLlevVwg==",
++      "license": "MIT"
++    },
+     "node_modules/@types/mdast": {
+       "version": "4.0.4",
+       "resolved": "https://registry.npmjs.org/@types/mdast/-/mdast-4.0.4.tgz",
+@@ -1575,6 +1584,15 @@
+         "url": "https://github.com/sponsors/wooorm"
+       }
+     },
++    "node_modules/commander": {
++      "version": "15.0.0",
++      "resolved": "https://registry.npmjs.org/commander/-/commander-15.0.0.tgz",
++      "integrity": "sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=22.12.0"
++      }
++    },
+     "node_modules/convert-source-map": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/convert-source-map/-/convert-source-map-2.0.0.tgz",
+@@ -1691,6 +1709,18 @@
+         "node": ">=10.13.0"
+       }
+     },
++    "node_modules/entities": {
++      "version": "6.0.1",
++      "resolved": "https://registry.npmjs.org/entities/-/entities-6.0.1.tgz",
++      "integrity": "sha512-aN97NXWF6AWBTahfVOIrB/NShkzi5H7F9r1s9mD3cDj4Ko5f2qhhVoYMibXF7GlLveb/D2ioWay8lxI97Ven3g==",
++      "license": "BSD-2-Clause",
++      "engines": {
++        "node": ">=0.12"
++      },
++      "funding": {
++        "url": "https://github.com/fb55/entities?sponsor=1"
++      }
++    },
+     "node_modules/escalade": {
+       "version": "3.2.0",
+       "resolved": "https://registry.npmjs.org/escalade/-/escalade-3.2.0.tgz",
+@@ -2061,6 +2091,101 @@
+       "integrity": "sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==",
+       "license": "ISC"
+     },
++    "node_modules/hast-util-from-dom": {
++      "version": "5.0.1",
++      "resolved": "https://registry.npmjs.org/hast-util-from-dom/-/hast-util-from-dom-5.0.1.tgz",
++      "integrity": "sha512-N+LqofjR2zuzTjCPzyDUdSshy4Ma6li7p/c3pA78uTwzFgENbgbUrm2ugwsOdcjI1muO+o6Dgzp9p8WHtn/39Q==",
++      "license": "ISC",
++      "dependencies": {
++        "@types/hast": "^3.0.0",
++        "hastscript": "^9.0.0",
++        "web-namespaces": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/hast-util-from-html": {
++      "version": "2.0.3",
++      "resolved": "https://registry.npmjs.org/hast-util-from-html/-/hast-util-from-html-2.0.3.tgz",
++      "integrity": "sha512-CUSRHXyKjzHov8yKsQjGOElXy/3EKpyX56ELnkHH34vDVw1N1XSQ1ZcAvTyAPtGqLTuKP/uxM+aLkSPqF/EtMw==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/hast": "^3.0.0",
++        "devlop": "^1.1.0",
++        "hast-util-from-parse5": "^8.0.0",
++        "parse5": "^7.0.0",
++        "vfile": "^6.0.0",
++        "vfile-message": "^4.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/hast-util-from-html-isomorphic": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/hast-util-from-html-isomorphic/-/hast-util-from-html-isomorphic-2.0.0.tgz",
++      "integrity": "sha512-zJfpXq44yff2hmE0XmwEOzdWin5xwH+QIhMLOScpX91e/NSGPsAzNCvLQDIEPyO2TXi+lBmU6hjLIhV8MwP2kw==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/hast": "^3.0.0",
++        "hast-util-from-dom": "^5.0.0",
++        "hast-util-from-html": "^2.0.0",
++        "unist-util-remove-position": "^5.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/hast-util-from-parse5": {
++      "version": "8.0.3",
++      "resolved": "https://registry.npmjs.org/hast-util-from-parse5/-/hast-util-from-parse5-8.0.3.tgz",
++      "integrity": "sha512-3kxEVkEKt0zvcZ3hCRYI8rqrgwtlIOFMWkbclACvjlDw8Li9S2hk/d51OI0nr/gIpdMHNepwgOKqZ/sy0Clpyg==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/hast": "^3.0.0",
++        "@types/unist": "^3.0.0",
++        "devlop": "^1.0.0",
++        "hastscript": "^9.0.0",
++        "property-information": "^7.0.0",
++        "vfile": "^6.0.0",
++        "vfile-location": "^5.0.0",
++        "web-namespaces": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/hast-util-is-element": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/hast-util-is-element/-/hast-util-is-element-3.0.0.tgz",
++      "integrity": "sha512-Val9mnv2IWpLbNPqc/pUem+a7Ipj2aHacCwgNfTiK0vJKl0LF+4Ba4+v1oPHFpf3bLYmreq0/l3Gud9S5OH42g==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/hast": "^3.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/hast-util-parse-selector": {
++      "version": "4.0.0",
++      "resolved": "https://registry.npmjs.org/hast-util-parse-selector/-/hast-util-parse-selector-4.0.0.tgz",
++      "integrity": "sha512-wkQCkSYoOGCRKERFWcxMVMOcYE2K1AaNLU8DXS9arxnLOUEWbOXKXiJUNzEpqZ3JOKpnha3jkFrumEjVliDe7A==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/hast": "^3.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
+     "node_modules/hast-util-to-jsx-runtime": {
+       "version": "2.3.6",
+       "resolved": "https://registry.npmjs.org/hast-util-to-jsx-runtime/-/hast-util-to-jsx-runtime-2.3.6.tgz",
+@@ -2088,6 +2213,22 @@
+         "url": "https://opencollective.com/unified"
+       }
+     },
++    "node_modules/hast-util-to-text": {
++      "version": "4.0.2",
++      "resolved": "https://registry.npmjs.org/hast-util-to-text/-/hast-util-to-text-4.0.2.tgz",
++      "integrity": "sha512-KK6y/BN8lbaq654j7JgBydev7wuNMcID54lkRav1P0CaE1e47P72AWWPiGKXTJU271ooYzcvTAn/Zt0REnvc7A==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/hast": "^3.0.0",
++        "@types/unist": "^3.0.0",
++        "hast-util-is-element": "^3.0.0",
++        "unist-util-find-after": "^5.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
+     "node_modules/hast-util-whitespace": {
+       "version": "3.0.0",
+       "resolved": "https://registry.npmjs.org/hast-util-whitespace/-/hast-util-whitespace-3.0.0.tgz",
+@@ -2101,6 +2242,23 @@
+         "url": "https://opencollective.com/unified"
+       }
+     },
++    "node_modules/hastscript": {
++      "version": "9.0.1",
++      "resolved": "https://registry.npmjs.org/hastscript/-/hastscript-9.0.1.tgz",
++      "integrity": "sha512-g7df9rMFX/SPi34tyGCyUBREQoKkapwdY/T04Qn9TDWfHhAYt4/I0gMVirzK5wEzeUqIjEB+LXC/ypb7Aqno5w==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/hast": "^3.0.0",
++        "comma-separated-tokens": "^2.0.0",
++        "hast-util-parse-selector": "^4.0.0",
++        "property-information": "^7.0.0",
++        "space-separated-tokens": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
+     "node_modules/hermes-estree": {
+       "version": "0.25.1",
+       "resolved": "https://registry.npmjs.org/hermes-estree/-/hermes-estree-0.25.1.tgz",
+@@ -2303,6 +2461,22 @@
+         "node": ">=6"
+       }
+     },
++    "node_modules/katex": {
++      "version": "0.19.0",
++      "resolved": "https://registry.npmjs.org/katex/-/katex-0.19.0.tgz",
++      "integrity": "sha512-v6Tznz3zJ7u3niRCoDTsumM2+HA2XXcCu+WAacCeHD2z3p9A9Ks987o5FzfTGBN0e8A0vjEgIDvLbICrXpdw/Q==",
++      "funding": [
++        "https://opencollective.com/katex",
++        "https://github.com/sponsors/katex"
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "commander": "^15.0.0"
++      },
++      "bin": {
++        "katex": "cli.js"
++      }
++    },
+     "node_modules/keyv": {
+       "version": "4.5.4",
+       "resolved": "https://registry.npmjs.org/keyv/-/keyv-4.5.4.tgz",
+@@ -2784,6 +2958,25 @@
+         "url": "https://opencollective.com/unified"
+       }
+     },
++    "node_modules/mdast-util-math": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/mdast-util-math/-/mdast-util-math-3.0.0.tgz",
++      "integrity": "sha512-Tl9GBNeG/AhJnQM221bJR2HPvLOSnLE/T9cJI9tlc6zwQk2nPk/4f0cHkOdEixQPC/j8UtKDdITswvLAy1OZ1w==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/hast": "^3.0.0",
++        "@types/mdast": "^4.0.0",
++        "devlop": "^1.0.0",
++        "longest-streak": "^3.0.0",
++        "mdast-util-from-markdown": "^2.0.0",
++        "mdast-util-to-markdown": "^2.1.0",
++        "unist-util-remove-position": "^5.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
+     "node_modules/mdast-util-mdx-expression": {
+       "version": "2.0.1",
+       "resolved": "https://registry.npmjs.org/mdast-util-mdx-expression/-/mdast-util-mdx-expression-2.0.1.tgz",
+@@ -3103,6 +3296,50 @@
+         "url": "https://opencollective.com/unified"
+       }
+     },
++    "node_modules/micromark-extension-math": {
++      "version": "3.1.0",
++      "resolved": "https://registry.npmjs.org/micromark-extension-math/-/micromark-extension-math-3.1.0.tgz",
++      "integrity": "sha512-lvEqd+fHjATVs+2v/8kg9i5Q0AP2k85H0WUOwpIVvUML8BapsMvh1XAogmQjOCsLpoKRCVQqEkQBB3NhVBcsOg==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/katex": "^0.16.0",
++        "devlop": "^1.0.0",
++        "katex": "^0.16.0",
++        "micromark-factory-space": "^2.0.0",
++        "micromark-util-character": "^2.0.0",
++        "micromark-util-symbol": "^2.0.0",
++        "micromark-util-types": "^2.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/micromark-extension-math/node_modules/commander": {
++      "version": "8.3.0",
++      "resolved": "https://registry.npmjs.org/commander/-/commander-8.3.0.tgz",
++      "integrity": "sha512-OkTL9umf+He2DZkUq8f8J9of7yL6RJKI24dVITBmNfZBmri9zYZQrKkuXiKhyfPSu8tUhnVBB1iKXevvnlR4Ww==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 12"
++      }
++    },
++    "node_modules/micromark-extension-math/node_modules/katex": {
++      "version": "0.16.47",
++      "resolved": "https://registry.npmjs.org/katex/-/katex-0.16.47.tgz",
++      "integrity": "sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg==",
++      "funding": [
++        "https://opencollective.com/katex",
++        "https://github.com/sponsors/katex"
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "commander": "^8.3.0"
++      },
++      "bin": {
++        "katex": "cli.js"
++      }
++    },
+     "node_modules/micromark-factory-destination": {
+       "version": "2.0.1",
+       "resolved": "https://registry.npmjs.org/micromark-factory-destination/-/micromark-factory-destination-2.0.1.tgz",
+@@ -3608,6 +3845,18 @@
+       "integrity": "sha512-CmBKiL6NNo/OqgmMn95Fk9Whlp2mtvIv+KNpQKN2F4SjvrEesubTRWGYSg+BnWZOnlCaSTU1sMpsBOzgbYhnsA==",
+       "license": "MIT"
+     },
++    "node_modules/parse5": {
++      "version": "7.3.0",
++      "resolved": "https://registry.npmjs.org/parse5/-/parse5-7.3.0.tgz",
++      "integrity": "sha512-IInvU7fabl34qmi9gY8XOVxhYyMyuH2xUNpb2q8/Y+7552KlejkRvqvD19nMoUW/uQGGbqNpA6Tufu5FL5BZgw==",
++      "license": "MIT",
++      "dependencies": {
++        "entities": "^6.0.0"
++      },
++      "funding": {
++        "url": "https://github.com/inikulin/parse5?sponsor=1"
++      }
++    },
+     "node_modules/path-exists": {
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/path-exists/-/path-exists-4.0.0.tgz",
+@@ -3754,6 +4003,50 @@
+         "react": ">=18"
+       }
+     },
++    "node_modules/rehype-katex": {
++      "version": "7.0.1",
++      "resolved": "https://registry.npmjs.org/rehype-katex/-/rehype-katex-7.0.1.tgz",
++      "integrity": "sha512-OiM2wrZ/wuhKkigASodFoo8wimG3H12LWQaH8qSPVJn9apWKFSH3YOCtbKpBorTVw/eI7cuT21XBbvwEswbIOA==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/hast": "^3.0.0",
++        "@types/katex": "^0.16.0",
++        "hast-util-from-html-isomorphic": "^2.0.0",
++        "hast-util-to-text": "^4.0.0",
++        "katex": "^0.16.0",
++        "unist-util-visit-parents": "^6.0.0",
++        "vfile": "^6.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
++    "node_modules/rehype-katex/node_modules/commander": {
++      "version": "8.3.0",
++      "resolved": "https://registry.npmjs.org/commander/-/commander-8.3.0.tgz",
++      "integrity": "sha512-OkTL9umf+He2DZkUq8f8J9of7yL6RJKI24dVITBmNfZBmri9zYZQrKkuXiKhyfPSu8tUhnVBB1iKXevvnlR4Ww==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 12"
++      }
++    },
++    "node_modules/rehype-katex/node_modules/katex": {
++      "version": "0.16.47",
++      "resolved": "https://registry.npmjs.org/katex/-/katex-0.16.47.tgz",
++      "integrity": "sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg==",
++      "funding": [
++        "https://opencollective.com/katex",
++        "https://github.com/sponsors/katex"
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "commander": "^8.3.0"
++      },
++      "bin": {
++        "katex": "cli.js"
++      }
++    },
+     "node_modules/remark-gfm": {
+       "version": "4.0.1",
+       "resolved": "https://registry.npmjs.org/remark-gfm/-/remark-gfm-4.0.1.tgz",
+@@ -3772,6 +4065,22 @@
+         "url": "https://opencollective.com/unified"
+       }
+     },
++    "node_modules/remark-math": {
++      "version": "6.0.0",
++      "resolved": "https://registry.npmjs.org/remark-math/-/remark-math-6.0.0.tgz",
++      "integrity": "sha512-MMqgnP74Igy+S3WwnhQ7kqGlEerTETXMvJhrUzDikVZ2/uogJCb+WHUg97hK9/jcfc0dkD73s3LN8zU49cTEtA==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/mdast": "^4.0.0",
++        "mdast-util-math": "^3.0.0",
++        "micromark-extension-math": "^3.0.0",
++        "unified": "^11.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
+     "node_modules/remark-parse": {
+       "version": "11.0.0",
+       "resolved": "https://registry.npmjs.org/remark-parse/-/remark-parse-11.0.0.tgz",
+@@ -4029,6 +4338,20 @@
+         "url": "https://opencollective.com/unified"
+       }
+     },
++    "node_modules/unist-util-find-after": {
++      "version": "5.0.0",
++      "resolved": "https://registry.npmjs.org/unist-util-find-after/-/unist-util-find-after-5.0.0.tgz",
++      "integrity": "sha512-amQa0Ep2m6hE2g72AugUItjbuM8X8cGQnFoHk0pGfrFeT9GZhzN5SW8nRsiGKK7Aif4CrACPENkA6P/Lw6fHGQ==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/unist": "^3.0.0",
++        "unist-util-is": "^6.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
+     "node_modules/unist-util-is": {
+       "version": "6.0.1",
+       "resolved": "https://registry.npmjs.org/unist-util-is/-/unist-util-is-6.0.1.tgz",
+@@ -4055,6 +4378,20 @@
+         "url": "https://opencollective.com/unified"
+       }
+     },
++    "node_modules/unist-util-remove-position": {
++      "version": "5.0.0",
++      "resolved": "https://registry.npmjs.org/unist-util-remove-position/-/unist-util-remove-position-5.0.0.tgz",
++      "integrity": "sha512-Hp5Kh3wLxv0PHj9m2yZhhLt58KzPtEYKQQ4yxfYFEO7EvHwzyDYnduhHnY1mDxoqr7VUwVuHXk9RXKIiYS1N8Q==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/unist": "^3.0.0",
++        "unist-util-visit": "^5.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
+     "node_modules/unist-util-stringify-position": {
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/unist-util-stringify-position/-/unist-util-stringify-position-4.0.0.tgz",
+@@ -4152,6 +4489,20 @@
+         "url": "https://opencollective.com/unified"
+       }
+     },
++    "node_modules/vfile-location": {
++      "version": "5.0.3",
++      "resolved": "https://registry.npmjs.org/vfile-location/-/vfile-location-5.0.3.tgz",
++      "integrity": "sha512-5yXvWDEgqeiYiBe1lbxYF7UMAIm/IcopxMHrMQDq3nvKcjPKIhZklUKL+AE7J7uApI4kwe2snsK+eI6UTj9EHg==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/unist": "^3.0.0",
++        "vfile": "^6.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/unified"
++      }
++    },
+     "node_modules/vfile-message": {
+       "version": "4.0.3",
+       "resolved": "https://registry.npmjs.org/vfile-message/-/vfile-message-4.0.3.tgz",
+@@ -4244,6 +4595,16 @@
+         }
+       }
+     },
++    "node_modules/web-namespaces": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/web-namespaces/-/web-namespaces-2.0.1.tgz",
++      "integrity": "sha512-bKr1DkiNa2krS7qxNtdrtHAmzuYGFQLiQ13TsorsdT6ULTkPLKuu5+GsFpDlg6JFjUTwX2DyhMPG2be8uPrqsQ==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/wooorm"
++      }
++    },
+     "node_modules/which": {
+       "version": "2.0.2",
+       "resolved": "https://registry.npmjs.org/which/-/which-2.0.2.tgz",
+diff --git a/frontend/package.json b/frontend/package.json
+index c929191..4a21a03 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -11,10 +11,13 @@
+   },
+   "dependencies": {
+     "@tailwindcss/vite": "^4.3.3",
++    "katex": "^0.19.0",
+     "react": "^19.2.8",
+     "react-dom": "^19.2.8",
+     "react-markdown": "^10.1.0",
++    "rehype-katex": "^7.0.1",
+     "remark-gfm": "^4.0.1",
++    "remark-math": "^6.0.0",
+     "tailwindcss": "^4.3.3"
+   },
+   "devDependencies": {
 diff --git a/frontend/src/App.jsx b/frontend/src/App.jsx
 index f67a3e9..1f77495 100644
 --- a/frontend/src/App.jsx
@@ -2050,12 +2573,30 @@ index 9c7b6b1..0000000
 \ No newline at end of file
 diff --git a/frontend/src/components/Markdown.jsx b/frontend/src/components/Markdown.jsx
 new file mode 100644
-index 0000000..3e6f17c
+index 0000000..fd8ba3e
 --- /dev/null
 +++ b/frontend/src/components/Markdown.jsx
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,91 @@
 +import ReactMarkdown from "react-markdown";
++import rehypeKatex from "rehype-katex";
 +import remarkGfm from "remark-gfm";
++import remarkMath from "remark-math";
++import "katex/dist/katex.min.css";
++
++const DISPLAY_MATH = /\\\[([\s\S]+?)\\\]/g;
++const INLINE_MATH = /\\\(([\s\S]+?)\\\)/g;
++
++/**
++ * The model writes LaTeX with \[...\] and \(...\) delimiters, while remark-math
++ * expects $$...$$. Normalize the delimiters before parsing. Single-dollar math
++ * stays disabled so currency amounts like "$215 billion" never turn into math.
++ */
++function normalizeMath(source) {
++  if (typeof source !== "string") return source;
++  return source
++    .replace(DISPLAY_MATH, (_, body) => `\n\n$$\n${body.trim()}\n$$\n\n`)
++    .replace(INLINE_MATH, (_, body) => `$$${body.trim()}$$`);
++}
 +
 +const COMPONENTS = {
 +  h1: ({ children }) => <h1 className="mb-4 mt-2 text-xl font-bold text-white sm:text-2xl">{children}</h1>,
@@ -2118,8 +2659,12 @@ index 0000000..3e6f17c
 +
 +export default function Markdown({ children }) {
 +  return (
-+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={COMPONENTS}>
-+      {children}
++    <ReactMarkdown
++      remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]}
++      rehypePlugins={[rehypeKatex]}
++      components={COMPONENTS}
++    >
++      {normalizeMath(children)}
 +    </ReactMarkdown>
 +  );
 +}
@@ -2200,14 +2745,15 @@ index 0000000..2038724
 +  );
 +}
 diff --git a/frontend/src/components/MonitorPanel.jsx b/frontend/src/components/MonitorPanel.jsx
-index edd567c..0517737 100644
+index edd567c..19bee48 100644
 --- a/frontend/src/components/MonitorPanel.jsx
 +++ b/frontend/src/components/MonitorPanel.jsx
-@@ -1,258 +1,137 @@
+@@ -1,258 +1,139 @@
  import { useCallback, useEffect, useState } from "react";
 +import { api } from "../lib/api";
 +import { useAuth } from "../lib/auth-context";
 +import { formatTime } from "../lib/format";
++import TickerSearch from "./TickerSearch";
 +import { Badge, EmptyState, ErrorBanner, Icon, Spinner } from "./ui";
  
 -const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -2365,10 +2911,9 @@ index edd567c..0517737 100644
            : `Outcome is scored ${horizon} days after the alert.`}
        </p>
 -    </div>
-+    </article>
-   );
- }
- 
+-  );
+-}
+-
 -function TokenGate({ onUnlock, onBack }) {
 -  const [value, setValue] = useState("");
 -  const [error, setError] = useState("");
@@ -2423,9 +2968,10 @@ index edd567c..0517737 100644
 -        </button>
 -      </form>
 -    </div>
--  );
--}
--
++    </article>
+   );
+ }
+ 
 -function MonitorPanel({ onBack }) {
 -  const [token, setToken] = useState(() => {
 -    try {
@@ -2442,7 +2988,9 @@ index edd567c..0517737 100644
    const [stats, setStats] = useState(null);
 +  const [loading, setLoading] = useState(true);
    const [error, setError] = useState("");
-   const [ticker, setTicker] = useState("");
+-  const [ticker, setTicker] = useState("");
++  const [query, setQuery] = useState("");
++  const [selected, setSelected] = useState(null);
    const [note, setNote] = useState("");
    const [busy, setBusy] = useState(false);
  
@@ -2532,17 +3080,20 @@ index edd567c..0517737 100644
  
    const running = runs[0]?.status === "running";
    useEffect(() => {
-@@ -273,143 +152,196 @@ function MonitorPanel({ onBack }) {
+@@ -273,143 +154,200 @@ function MonitorPanel({ onBack }) {
      }
    };
  
 -  const addTicker = (e) => {
 -    e.preventDefault();
+-    const symbol = ticker.trim().toUpperCase();
+-    if (!TICKER_PATTERN.test(symbol)) {
+-      setError("Enter a ticker symbol such as NVDA or RELIANCE.NS.");
 +  const addTicker = (event) => {
 +    event.preventDefault();
-     const symbol = ticker.trim().toUpperCase();
-     if (!TICKER_PATTERN.test(symbol)) {
-       setError("Enter a ticker symbol such as NVDA or RELIANCE.NS.");
++    const symbol = (selected?.symbol ?? query.trim()).toUpperCase();
++    if (!selected && !TICKER_PATTERN.test(symbol)) {
++      setError("Search for a company first, or enter a ticker symbol such as NVDA or RELIANCE.NS.");
        return;
      }
      act(async () => {
@@ -2552,7 +3103,9 @@ index edd567c..0517737 100644
 -        body: JSON.stringify({ ticker: symbol, note: note.trim() || null }),
 +        body: { ticker: symbol, note: note.trim() || null },
        });
-       setTicker("");
+-      setTicker("");
++      setQuery("");
++      setSelected(null);
        setNote("");
      });
    };
@@ -2673,30 +3226,6 @@ index edd567c..0517737 100644
 +              <h2 className="text-sm font-semibold text-white">Watchlist</h2>
 +              <span className="text-xs text-slate-500">({watchlist.length}/25)</span>
 +            </div>
-+
-+            <form onSubmit={addTicker} className="panel mb-3 space-y-2 p-3">
-+              <div className="flex gap-2">
-+                <input
-+                  value={ticker}
-+                  onChange={(e) => setTicker(e.target.value)}
-+                  placeholder="Ticker, e.g. NVDA"
-+                  aria-label="Ticker"
-+                  className="input-dark w-32 sm:w-40"
-+                />
-+                <input
-+                  value={note}
-+                  onChange={(e) => setNote(e.target.value)}
-+                  placeholder="Why you watch it (optional)"
-+                  aria-label="Note"
-+                  maxLength={500}
-+                  className="input-dark flex-1"
-+                />
-+              </div>
-+              <button type="submit" disabled={busy || !ticker.trim()} className="btn-ghost w-full">
-+                <Icon name="plus" className="h-4 w-4" />
-+                Add to watchlist
-+              </button>
-+            </form>
  
 -        <Section title="Watchlist" hint="The scheduled run checks every ticker here, after the Indian and US market closes.">
 -          <form onSubmit={addTicker} className="flex flex-col sm:flex-row gap-2 mb-4">
@@ -2744,6 +3273,43 @@ index edd567c..0517737 100644
 -            </ul>
 -          )}
 -        </Section>
++            <form onSubmit={addTicker} className="panel mb-3 space-y-2 p-3">
++              <TickerSearch
++                query={query}
++                onQueryChange={(value) => {
++                  setQuery(value);
++                  setSelected(null);
++                }}
++                selected={selected}
++                onSelect={setSelected}
++                placeholder="Company name or ticker, e.g. NVDA"
++                ariaLabel="Search for a company to add"
++                inputClassName="input-dark pl-10"
++              />
++              <input
++                value={note}
++                onChange={(e) => setNote(e.target.value)}
++                placeholder="Why you watch it (optional)"
++                aria-label="Note"
++                maxLength={500}
++                className="input-dark"
++              />
++              <button type="submit" disabled={busy || !query.trim()} className="btn-ghost w-full">
++                <Icon name="plus" className="h-4 w-4" />
++                {selected ? `Add ${selected.symbol} to watchlist` : "Add to watchlist"}
++              </button>
++            </form>
+ 
+-        <Section title="Recent alerts">
+-          {alerts.length === 0 ? (
+-            <p className="text-sm text-gray-500">
+-              No alerts yet. The agent only alerts when a ticker has a large move or earnings coming up and the analysis passes its fact-check.
+-            </p>
+-          ) : (
+-            <div className="space-y-3">
+-              {alerts.map((alert) => (
+-                <AlertCard key={alert.id} alert={alert} horizon={stats?.horizon_days ?? 7} />
+-              ))}
 +            {watchlist.length === 0 ? (
 +              <EmptyState
 +                icon="activity"
@@ -2776,17 +3342,7 @@ index edd567c..0517737 100644
 +              </ul>
 +            )}
 +          </section>
- 
--        <Section title="Recent alerts">
--          {alerts.length === 0 ? (
--            <p className="text-sm text-gray-500">
--              No alerts yet. The agent only alerts when a ticker has a large move or earnings coming up and the analysis passes its fact-check.
--            </p>
--          ) : (
--            <div className="space-y-3">
--              {alerts.map((alert) => (
--                <AlertCard key={alert.id} alert={alert} horizon={stats?.horizon_days ?? 7} />
--              ))}
++
 +          <section>
 +            <div className="mb-3 flex items-center gap-2">
 +              <Icon name="bell" className="h-4 w-4 text-indigo-300" />
@@ -2845,61 +3401,18 @@ index edd567c..0517737 100644
 -export default MonitorPanel;
 diff --git a/frontend/src/components/NewAnalysis.jsx b/frontend/src/components/NewAnalysis.jsx
 new file mode 100644
-index 0000000..2ad5300
+index 0000000..c51c982
 --- /dev/null
 +++ b/frontend/src/components/NewAnalysis.jsx
-@@ -0,0 +1,184 @@
-+import { useEffect, useState } from "react";
-+import { api } from "../lib/api";
+@@ -0,0 +1,92 @@
++import { useState } from "react";
 +import { formatTime } from "../lib/format";
-+import { EmptyState, ErrorBanner, Icon, Spinner } from "./ui";
-+
-+function useTickerSearch(query) {
-+  const [results, setResults] = useState([]);
-+  const [searching, setSearching] = useState(false);
-+  const [error, setError] = useState("");
-+
-+  useEffect(() => {
-+    let cancelled = false;
-+    const timer = setTimeout(async () => {
-+      const trimmed = query.trim();
-+      if (trimmed.length < 2) {
-+        if (!cancelled) {
-+          setResults([]);
-+          setSearching(false);
-+        }
-+        return;
-+      }
-+      setSearching(true);
-+      try {
-+        const data = await api(`/resolve?q=${encodeURIComponent(trimmed)}`);
-+        if (!cancelled) {
-+          setResults(data.results || []);
-+          setError("");
-+        }
-+      } catch (err) {
-+        if (!cancelled) {
-+          setResults([]);
-+          setError(err.message);
-+        }
-+      } finally {
-+        if (!cancelled) setSearching(false);
-+      }
-+    }, 350);
-+
-+    return () => {
-+      cancelled = true;
-+      clearTimeout(timer);
-+    };
-+  }, [query]);
-+
-+  return { results, searching, error };
-+}
++import TickerSearch from "./TickerSearch";
++import { EmptyState, Icon } from "./ui";
 +
 +export default function NewAnalysis({ onSubmit, conversations = [], onOpenConversation }) {
 +  const [query, setQuery] = useState("");
 +  const [selected, setSelected] = useState(null);
-+  const { results, searching, error } = useTickerSearch(query);
 +
 +  const start = (event) => {
 +    event.preventDefault();
@@ -2924,66 +3437,17 @@ index 0000000..2ad5300
 +
 +      <form onSubmit={start} className="mt-8 animate-fade-up">
 +        <div className="panel p-2">
-+          <div className="relative">
-+            <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">
-+              <Icon name="search" className="h-4 w-4" />
-+            </span>
-+            <input
-+              autoFocus
-+              type="text"
-+              value={query}
-+              onChange={(e) => {
-+                setQuery(e.target.value);
-+                setSelected(null);
-+              }}
-+              placeholder="Company name or ticker, e.g. NVIDIA or RELIANCE.NS"
-+              aria-label="Search for a company"
-+              className="w-full rounded-xl border border-transparent bg-transparent py-3.5 pl-11 pr-10 text-sm text-slate-100 placeholder-slate-500 outline-none focus:border-indigo-400/50"
-+            />
-+            {searching && (
-+              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-indigo-300">
-+                <Spinner />
-+              </span>
-+            )}
-+          </div>
-+
-+          {results.length > 0 && (
-+            <div className="mt-1 max-h-64 space-y-1 overflow-y-auto border-t border-white/[0.06] pt-2">
-+              {results.map((result) => (
-+                <button
-+                  key={result.symbol}
-+                  type="button"
-+                  onClick={() => setSelected(result)}
-+                  className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition ${
-+                    selected?.symbol === result.symbol
-+                      ? "bg-indigo-500/15 ring-1 ring-inset ring-indigo-400/40"
-+                      : "hover:bg-white/[0.04]"
-+                  }`}
-+                >
-+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-[10px] font-bold text-indigo-300">
-+                    {result.symbol.slice(0, 4)}
-+                  </span>
-+                  <span className="min-w-0 flex-1">
-+                    <span className="block truncate text-sm font-medium text-slate-200">
-+                      {result.name}
-+                      <span className="ml-2 text-xs font-normal text-slate-500">{result.symbol}</span>
-+                    </span>
-+                    <span className="block text-xs text-slate-500">{result.exchange}</span>
-+                  </span>
-+                  {selected?.symbol === result.symbol && (
-+                    <Icon name="check" className="h-4 w-4 shrink-0 text-indigo-300" />
-+                  )}
-+                </button>
-+              ))}
-+            </div>
-+          )}
++          <TickerSearch
++            autoFocus
++            query={query}
++            onQueryChange={(value) => {
++              setQuery(value);
++              setSelected(null);
++            }}
++            selected={selected}
++            onSelect={setSelected}
++          />
 +        </div>
-+
-+        {error && (
-+          <div className="mt-3">
-+            <ErrorBanner>{error}</ErrorBanner>
-+          </div>
-+        )}
 +
 +        <button type="submit" disabled={!selected} className="btn-primary mt-4 w-full py-3">
 +          <Icon name="chart" className="h-4 w-4" />
@@ -3223,6 +3687,97 @@ index 0000000..d9263ba
 +    </aside>
 +  );
 +}
+diff --git a/frontend/src/components/TickerSearch.jsx b/frontend/src/components/TickerSearch.jsx
+new file mode 100644
+index 0000000..28dd965
+--- /dev/null
++++ b/frontend/src/components/TickerSearch.jsx
+@@ -0,0 +1,85 @@
++import { useTickerSearch } from "../lib/use-ticker-search";
++import { Icon, Spinner } from "./ui";
++
++const DEFAULT_INPUT =
++  "w-full rounded-xl border border-transparent bg-transparent py-3.5 pl-10 pr-10 text-sm text-slate-100 placeholder-slate-500 outline-none focus:border-indigo-400/50";
++
++/**
++ * Company/ticker search box with live suggestions from /resolve.
++ * Controlled: the parent owns `query` and `selected`, and clears `selected`
++ * whenever the query changes.
++ */
++export default function TickerSearch({
++  query,
++  onQueryChange,
++  selected,
++  onSelect,
++  placeholder = "Company name or ticker, e.g. NVIDIA or RELIANCE.NS",
++  ariaLabel = "Search for a company",
++  autoFocus = false,
++  inputClassName = DEFAULT_INPUT,
++}) {
++  const { results, searching, error } = useTickerSearch(query);
++
++  return (
++    <>
++      <div className="relative">
++        <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500">
++          <Icon name="search" className="h-4 w-4" />
++        </span>
++        <input
++          type="text"
++          value={query}
++          onChange={(e) => onQueryChange(e.target.value)}
++          placeholder={placeholder}
++          aria-label={ariaLabel}
++          autoFocus={autoFocus}
++          className={inputClassName}
++        />
++        {searching && (
++          <span className="absolute right-4 top-1/2 -translate-y-1/2 text-indigo-300">
++            <Spinner />
++          </span>
++        )}
++      </div>
++
++      {results.length > 0 && (
++        <div className="mt-1 max-h-64 space-y-1 overflow-y-auto border-t border-white/[0.06] pt-2">
++          {results.map((result) => (
++            <button
++              key={result.symbol}
++              type="button"
++              onClick={() => onSelect(result)}
++              className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition ${
++                selected?.symbol === result.symbol
++                  ? "bg-indigo-500/15 ring-1 ring-inset ring-indigo-400/40"
++                  : "hover:bg-white/[0.04]"
++              }`}
++            >
++              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-[10px] font-bold text-indigo-300">
++                {result.symbol.slice(0, 4)}
++              </span>
++              <span className="min-w-0 flex-1">
++                <span className="block truncate text-sm font-medium text-slate-200">
++                  {result.name}
++                  <span className="ml-2 text-xs font-normal text-slate-500">{result.symbol}</span>
++                </span>
++                <span className="block text-xs text-slate-500">{result.exchange}</span>
++              </span>
++              {selected?.symbol === result.symbol && (
++                <Icon name="check" className="h-4 w-4 shrink-0 text-indigo-300" />
++              )}
++            </button>
++          ))}
++        </div>
++      )}
++
++      {error && (
++        <p className="flex items-center gap-1.5 px-1 pt-2 text-xs text-rose-300">
++          <Icon name="alert" className="h-3.5 w-3.5 shrink-0" />
++          {error}
++        </p>
++      )}
++    </>
++  );
++}
 diff --git a/frontend/src/components/ui.jsx b/frontend/src/components/ui.jsx
 new file mode 100644
 index 0000000..ade570b
@@ -3459,7 +4014,7 @@ index 0000000..ade570b
 +  );
 +}
 diff --git a/frontend/src/index.css b/frontend/src/index.css
-index fc28d7b..76a02ff 100644
+index fc28d7b..97db454 100644
 --- a/frontend/src/index.css
 +++ b/frontend/src/index.css
 @@ -1,5 +1,38 @@
@@ -3501,7 +4056,7 @@ index fc28d7b..76a02ff 100644
  html,
  body,
  #root {
-@@ -8,6 +41,56 @@ body,
+@@ -8,6 +41,66 @@ body,
  }
  
  body {
@@ -3542,25 +4097,35 @@ index fc28d7b..76a02ff 100644
 +  background: transparent;
 +}
 +
-+/* Reusable panel look */
-+.panel {
-+  @apply rounded-2xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm;
++/* Reusable component classes. Kept inside @layer components so that utility
++   classes (e.g. pl-10 on an input with an icon) can override them. */
++@layer components {
++  .panel {
++    @apply rounded-2xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm;
++  }
++
++  .panel-hover {
++    @apply transition hover:border-white/[0.14] hover:bg-white/[0.04];
++  }
++
++  .input-dark {
++    @apply w-full rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-indigo-400/70 focus:ring-2 focus:ring-indigo-500/20;
++  }
++
++  .btn-primary {
++    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-950/40 transition hover:from-indigo-400 hover:to-violet-400 disabled:cursor-not-allowed disabled:from-slate-700 disabled:to-slate-700 disabled:text-slate-400 disabled:shadow-none;
++  }
++
++  .btn-ghost {
++    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:border-white/20 hover:bg-white/[0.05] hover:text-white disabled:cursor-not-allowed disabled:opacity-50;
++  }
 +}
 +
-+.panel-hover {
-+  @apply transition hover:border-white/[0.14] hover:bg-white/[0.04];
-+}
-+
-+.input-dark {
-+  @apply w-full rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-indigo-400/70 focus:ring-2 focus:ring-indigo-500/20;
-+}
-+
-+.btn-primary {
-+  @apply inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-950/40 transition hover:from-indigo-400 hover:to-violet-400 disabled:cursor-not-allowed disabled:from-slate-700 disabled:to-slate-700 disabled:text-slate-400 disabled:shadow-none;
-+}
-+
-+.btn-ghost {
-+  @apply inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:border-white/20 hover:bg-white/[0.05] hover:text-white disabled:cursor-not-allowed disabled:opacity-50;
++/* Rendered math */
++.katex-display {
++  overflow-x: auto;
++  overflow-y: hidden;
++  padding: 0.35rem 0;
 +}
 diff --git a/frontend/src/lib/api.js b/frontend/src/lib/api.js
 new file mode 100644
@@ -3707,6 +4272,57 @@ index 0000000..a447adc
 +    .slice(0, 2)
 +    .map((part) => part[0].toUpperCase())
 +    .join("");
++}
+diff --git a/frontend/src/lib/use-ticker-search.js b/frontend/src/lib/use-ticker-search.js
+new file mode 100644
+index 0000000..9eabab7
+--- /dev/null
++++ b/frontend/src/lib/use-ticker-search.js
+@@ -0,0 +1,45 @@
++import { useEffect, useState } from "react";
++import { api } from "./api";
++
++/** Debounced company/ticker search backed by the /resolve endpoint. */
++export function useTickerSearch(query) {
++  const [results, setResults] = useState([]);
++  const [searching, setSearching] = useState(false);
++  const [error, setError] = useState("");
++
++  useEffect(() => {
++    let cancelled = false;
++    const timer = setTimeout(async () => {
++      const trimmed = query.trim();
++      if (trimmed.length < 2) {
++        if (!cancelled) {
++          setResults([]);
++          setSearching(false);
++        }
++        return;
++      }
++      setSearching(true);
++      try {
++        const data = await api(`/resolve?q=${encodeURIComponent(trimmed)}`);
++        if (!cancelled) {
++          setResults(data.results || []);
++          setError("");
++        }
++      } catch (err) {
++        if (!cancelled) {
++          setResults([]);
++          setError(err.message);
++        }
++      } finally {
++        if (!cancelled) setSearching(false);
++      }
++    }, 350);
++
++    return () => {
++      cancelled = true;
++      clearTimeout(timer);
++    };
++  }, [query]);
++
++  return { results, searching, error };
 +}
 diff --git a/history.py b/history.py
 new file mode 100644
