@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 
 class MonitorState(TypedDict, total=False):
     run_id: int
-    watchlist: list[dict]
+    user_id: int | None           # None = scheduled run over every account
+    watchlist: list[dict]         # grouped by ticker: {ticker, name, watchers, notes}
     candidates: list[dict]
     queue: list[str]
     current: dict
@@ -68,8 +69,9 @@ def build_task(current: dict) -> str:
         f"Triggers: {triggers}.\n"
         f"Market signals computed from price data: {json.dumps(current['signals'])}\n"
     )
-    if current.get("note"):
-        task += f"The owner's note on this stock (context only): {current['note']}\n"
+    notes = list(dict.fromkeys(current.get("notes") or []))
+    if notes:
+        task += f"The user's note on this stock (context only): {'; '.join(notes)}\n"
     task += (
         "\nInvestigate what the financial data says about this situation. Fetch what you need "
         "with the tools (statements, valuation, cash flow as relevant). Use the calculate tool "
@@ -101,9 +103,22 @@ def _fail(current: dict, why: str) -> dict:
 def build_monitor_graph(deps: MonitorDeps):
 
     async def load(state: MonitorState):
-        items = await asyncio.to_thread(db.list_watchlist)
-        return {"watchlist": items, "results": [], "skipped": [], "errors": [], "quiet": 0,
-                "candidates": [], "queue": []}
+        # One account (manual run) or every account (scheduled run).
+        items = await asyncio.to_thread(db.list_watchlist, state.get("user_id"))
+        grouped: dict[str, dict] = {}
+        for item in items:
+            entry = grouped.setdefault(item["ticker"], {
+                "ticker": item["ticker"], "name": item.get("name"),
+                "watchers": [], "notes": [],
+            })
+            if item.get("name") and not entry["name"]:
+                entry["name"] = item["name"]
+            if item.get("user_id") is not None:
+                entry["watchers"].append(item["user_id"])
+            if item.get("note"):
+                entry["notes"].append(item["note"])
+        return {"watchlist": list(grouped.values()), "results": [], "skipped": [], "errors": [],
+                "quiet": 0, "candidates": [], "queue": []}
 
     async def scan(state: MonitorState):
         sem = asyncio.Semaphore(3)
@@ -128,12 +143,20 @@ def build_monitor_graph(deps: MonitorDeps):
             if not sig.qualifies(triggers):
                 quiet += 1
                 continue
-            last = await asyncio.to_thread(db.last_alert_time, ticker)
-            if last is not None and (now - last).total_seconds() < cfg.COOLDOWN_HOURS * 3600:
+            # A ticker watched by several accounts is investigated once; the
+            # cooldown is applied per account so each one gets its own alerts.
+            watchers = item["watchers"] or [None]
+            cooled = []
+            for watcher in watchers:
+                last = await asyncio.to_thread(db.last_alert_time, ticker, watcher)
+                if last is None or (now - last).total_seconds() >= cfg.COOLDOWN_HOURS * 3600:
+                    cooled.append(watcher)
+            if not cooled:
                 skipped.append({"ticker": ticker, "reason": f"alerted within the last {cfg.COOLDOWN_HOURS}h"})
                 continue
             candidates.append({
-                "ticker": ticker, "name": item.get("name"), "note": item.get("note"),
+                "ticker": ticker, "name": item.get("name"), "notes": item["notes"],
+                "watchers": cooled,
                 "signals": signals, "triggers": triggers, "score": sig.score(triggers),
                 "signal_line": sig.describe(signals, triggers),
             })
@@ -156,7 +179,8 @@ def build_monitor_graph(deps: MonitorDeps):
         ticker = queue.pop(0)
         cand = next(c for c in state["candidates"] if c["ticker"] == ticker)
         current = {
-            "ticker": ticker, "name": cand["name"], "note": cand["note"],
+            "ticker": ticker, "name": cand["name"], "notes": cand.get("notes", []),
+            "watchers": cand.get("watchers", []),
             "signals": cand["signals"], "triggers": cand["triggers"],
             "signal_line": cand["signal_line"], "attempt": 0, "feedback": [],
             "draft": "", "evidence": [], "brief": None, "verdict": None, "failed": None,
@@ -241,11 +265,13 @@ def build_monitor_graph(deps: MonitorDeps):
             stance, confidence = "neutral", "low"
 
         sent = await deps.notifier.send(text)
-        await asyncio.to_thread(
-            db.insert_alert, run_id=state["run_id"], ticker=ticker,
-            triggers=[t["detail"] for t in cur["triggers"]], headline=headline, summary=summary,
-            stance=stance, confidence=confidence, verified=verified,
-            price_at_alert=cur["signals"].get("price"), sent=sent)
+        # One row per account watching this ticker, so each history shows the alert.
+        for watcher in cur.get("watchers") or [None]:
+            await asyncio.to_thread(
+                db.insert_alert, run_id=state["run_id"], user_id=watcher, ticker=ticker,
+                triggers=[t["detail"] for t in cur["triggers"]], headline=headline, summary=summary,
+                stance=stance, confidence=confidence, verified=verified,
+                price_at_alert=cur["signals"].get("price"), sent=sent)
         results = list(state["results"]) + [{
             "ticker": ticker, "verified": verified, "sent": sent, "headline": headline,
             "revisions": cur["attempt"],

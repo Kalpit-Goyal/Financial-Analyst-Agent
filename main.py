@@ -4,15 +4,18 @@ import os
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Query
+from fastapi import Depends, FastAPI, Query, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from langchain_core.messages import AIMessageChunk
 
+from auth import get_current_user, router as auth_router
 from graph import create_graph, close_graph
+from history import router as history_router
 from state import create_initial_state
 from user_input import search_tickers
+from monitor import db
 from monitor.api import router as monitor_router
 from monitor.db import init_db
 
@@ -32,13 +35,16 @@ if not os.getenv("GROQ_API_KEY"):
     raise RuntimeError("GROQ_API_KEY is not configured. Set it in the .env file.")
 
 
+logger = logging.getLogger(__name__)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
         await asyncio.to_thread(init_db)
     except Exception:
-        # Chat keeps working; only the owner-only monitor endpoints need the database.
-        logger.exception("database init failed; watchlist and monitor are unavailable")
+        # Chat keeps working; history and the monitor endpoints need the database.
+        logger.exception("database init failed; accounts, history and monitor are unavailable")
     yield
     await close_graph()
 
@@ -58,6 +64,8 @@ app.add_middleware(
 )
 
 
+app.include_router(auth_router)
+app.include_router(history_router)
 app.include_router(monitor_router)
 
 
@@ -73,9 +81,6 @@ class AnalysisRequest(BaseModel):
     messages: list[ChatTurn] = Field(default_factory=list, max_length=12)
 
 
-logger = logging.getLogger(__name__)
-
-
 @app.get("/")
 def health_check():
     return {"status": "ok"}
@@ -83,15 +88,38 @@ def health_check():
 
 @app.get("/resolve")
 @limiter.limit("30/minute")
-async def resolve(request: Request, q: str = Query(min_length=1, max_length=80)):
+async def resolve(
+    request: Request,
+    q: str = Query(min_length=1, max_length=80),
+    user: dict = Depends(get_current_user),
+):
     results = await asyncio.to_thread(search_tickers, q)
     return {"results": results}
 
 
 @app.post("/analyze")
 @limiter.limit("10/minute")
-async def analyze(request: Request, body: AnalysisRequest):
+async def analyze(
+    request: Request,
+    body: AnalysisRequest,
+    user: dict = Depends(get_current_user),
+):
     async def event_stream():
+        conversation_id = None
+        answer_parts: list[str] = []
+        tool_names: list[str] = []
+        error_text = None
+
+        # History is best effort: chat must keep working even if the database is down.
+        try:
+            conversation_id = await asyncio.to_thread(
+                db.upsert_conversation, user["id"], body.ticker, body.company)
+            await asyncio.to_thread(
+                db.add_message, conversation_id, "user", body.question)
+        except Exception:
+            logger.exception("could not record the conversation")
+            conversation_id = None
+
         try:
             graph = await create_graph()
 
@@ -120,6 +148,7 @@ async def analyze(request: Request, body: AnalysisRequest):
                     content = message_chunk.content or ""
 
                     if content:
+                        answer_parts.append(content)
                         yield json.dumps({
                             "type": "token",
                             "content": content,
@@ -140,17 +169,34 @@ async def analyze(request: Request, body: AnalysisRequest):
                                 continue
 
                             reported_tool_calls.add(dedupe_key)
+                            tool_names.append(tool_name)
                             yield json.dumps({
                                 "type": "tool_call",
                                 "tool": tool_name,
                             }) + "\n"
 
-            yield json.dumps({"type": "done"}) + "\n"
+            yield json.dumps({
+                "type": "done",
+                "conversation_id": conversation_id,
+            }) + "\n"
         except Exception:
             logger.exception("analysis failed")
+            error_text = "Analysis failed. Please try again."
             yield json.dumps({
                 "type": "error",
-                "content": "Analysis failed. Please try again.",
+                "content": error_text,
             }) + "\n"
+        finally:
+            if conversation_id is not None:
+                answer = "".join(answer_parts).strip()
+                if error_text:
+                    answer = (answer + "\n\n" if answer else "") + f"⚠️ {error_text}"
+                if answer:
+                    try:
+                        await asyncio.to_thread(
+                            db.add_message, conversation_id, "assistant", answer,
+                            tool_names or None, error_text is not None)
+                    except Exception:
+                        logger.exception("could not save the assistant message")
 
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")

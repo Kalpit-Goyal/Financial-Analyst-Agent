@@ -20,13 +20,20 @@ async def default_deps() -> MonitorDeps:
 
 
 async def execute_run(run_id: int, deps: MonitorDeps | None = None) -> dict | None:
-    """Run the monitor graph for an already-created run row. Never raises."""
+    """Run the monitor graph for an already-created run row. Never raises.
+
+    The run row decides the scope: a manual run carries the account that asked
+    for it (its watchlist only), a scheduled run has no account and scans every
+    account's watchlist.
+    """
     notifier = None
     try:
+        run = await asyncio.to_thread(db.get_run, run_id)
         deps = deps or await default_deps()
         notifier = deps.notifier
         final = await build_monitor_graph(deps).ainvoke(
-            {"run_id": run_id}, config={"recursion_limit": 200})
+            {"run_id": run_id, "user_id": (run or {}).get("user_id")},
+            config={"recursion_limit": 200})
         return final.get("summary")
     except Exception as exc:
         logger.exception("monitor run %s failed", run_id)

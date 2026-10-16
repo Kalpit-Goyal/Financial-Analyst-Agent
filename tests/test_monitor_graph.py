@@ -11,17 +11,19 @@ from tests.monitor_fakes import (
 )
 
 
-def run_graph(database, *, signals, llm, analyst=None, notifier=None, watch=("NVDA",), notes=None):
+def run_graph(database, *, signals, llm, analyst=None, notifier=None, watch=("NVDA",), notes=None, user=None):
+    user = user or database.create_user("owner@example.com", "Owner", "scrypt:00:00")
     for t in watch:
-        database.add_watchlist(t, f"{t} Inc", (notes or {}).get(t))
+        database.add_watchlist(user["id"], t, f"{t} Inc", (notes or {}).get(t))
     analyst = analyst or FakeAnalystGraph()
     notifier = notifier or FakeNotifier()
     deps = MonitorDeps(
         analyst_graph=analyst, llm=llm, notifier=notifier,
         signal_fn=lambda t: signals[t] if not isinstance(signals[t], Exception) else (_ for _ in ()).throw(signals[t]),
     )
-    run_id = database.try_start_run("manual")
-    state = asyncio.run(build_monitor_graph(deps).ainvoke({"run_id": run_id}, config={"recursion_limit": 200}))
+    run_id = database.try_start_run("manual", user["id"])
+    state = asyncio.run(build_monitor_graph(deps).ainvoke(
+        {"run_id": run_id, "user_id": user["id"]}, config={"recursion_limit": 200}))
     return state, analyst, notifier, run_id
 
 
@@ -85,15 +87,51 @@ def test_never_verified_alert_withholds_model_claims(database):
 
 
 def test_cooldown_prevents_repeat_alerts(database):
-    database.insert_alert(run_id=0, ticker="NVDA", triggers=[], headline="h", summary="s",
+    user = database.create_user("owner@example.com", "Owner", "scrypt:00:00")
+    database.insert_alert(run_id=0, user_id=user["id"], ticker="NVDA", triggers=[], headline="h", summary="s",
                           stance="neutral", confidence="low", verified=True,
                           price_at_alert=1.0, sent=True)
     llm = FakeLLM({Triage: [triage_all("NVDA")]})
-    state, analyst, notifier, _ = run_graph(database, signals={"NVDA": make_signals("NVDA")}, llm=llm)
+    state, analyst, notifier, _ = run_graph(database, signals={"NVDA": make_signals("NVDA")}, llm=llm, user=user)
 
     assert analyst.prompts == [] and notifier.sent == []
     assert llm.calls == []
     assert "alerted within" in state["skipped"][0]["reason"]
+
+
+def test_shared_ticker_alerts_each_account_with_its_own_cooldown(database):
+    a = database.create_user("a@example.com", "A", "scrypt:00:00")
+    b = database.create_user("b@example.com", "B", "scrypt:00:00")
+    database.add_watchlist(a["id"], "NVDA")
+    database.add_watchlist(b["id"], "NVDA")
+    # A was already alerted recently; only B should get the new alert.
+    database.insert_alert(run_id=0, user_id=a["id"], ticker="NVDA", triggers=[], headline="old",
+                          summary="s", stance="neutral", confidence="low", verified=True,
+                          price_at_alert=1.0, sent=True)
+    llm = FakeLLM({Triage: [triage_all("NVDA")], Brief: [brief()], Verdict: [approved()]})
+    deps = MonitorDeps(analyst_graph=FakeAnalystGraph(), llm=llm, notifier=FakeNotifier(),
+                       signal_fn=lambda t: make_signals(t))
+    run_id = database.try_start_run("schedule")   # system run over every account
+    state = asyncio.run(build_monitor_graph(deps).ainvoke({"run_id": run_id}, config={"recursion_limit": 200}))
+
+    assert state["candidates"][0]["watchers"] == [b["id"]]
+    assert len(database.list_alerts(b["id"])) == 1
+    assert len(database.list_alerts(a["id"])) == 1       # only the old one
+    assert database.list_alerts(b["id"])[0]["headline"] == "Margins expanded"
+
+
+def test_manual_run_only_scans_that_accounts_watchlist(database):
+    a = database.create_user("a@example.com", "A", "scrypt:00:00")
+    b = database.create_user("b@example.com", "B", "scrypt:00:00")
+    database.add_watchlist(a["id"], "NVDA", "NVIDIA")
+    database.add_watchlist(b["id"], "AAPL", "Apple")
+    llm = FakeLLM({Triage: [triage_all("NVDA")]})
+    deps = MonitorDeps(analyst_graph=FakeAnalystGraph(), llm=llm, notifier=FakeNotifier(),
+                       signal_fn=lambda t: make_signals(t))
+    run_id = database.try_start_run("manual", a["id"])
+    state = asyncio.run(build_monitor_graph(deps).ainvoke(
+        {"run_id": run_id, "user_id": a["id"]}, config={"recursion_limit": 200}))
+    assert [c["ticker"] for c in state["candidates"]] == ["NVDA"]
 
 
 def test_triage_can_decline(database):
@@ -166,7 +204,7 @@ def test_investigation_limit_per_run(database, monkeypatch):
     assert len([s for s in state["skipped"] if "limit" in s["reason"]]) == 2
 
 
-def test_the_owners_note_is_context_not_instruction(database):
+def test_the_users_note_is_context_not_instruction(database):
     llm = FakeLLM({Triage: [triage_all("NVDA")], Brief: [brief()], Verdict: [approved()]})
     state, analyst, *_ = run_graph(
         database, signals={"NVDA": make_signals("NVDA")}, llm=llm, notes={"NVDA": "long-term AI play"})
@@ -196,8 +234,9 @@ def test_crash_marks_the_run_failed_and_notifies(database):
     notifier = FakeNotifier()
     deps = MonitorDeps(analyst_graph=FakeAnalystGraph(), llm=FakeLLM({}), notifier=notifier,
                        signal_fn=lambda t: make_signals(t))
-    database.add_watchlist("NVDA")
-    run_id = database.try_start_run("manual")
+    user = database.create_user("owner@example.com", "Owner", "scrypt:00:00")
+    database.add_watchlist(user["id"], "NVDA")
+    run_id = database.try_start_run("manual", user["id"])
 
     import monitor.runner as runner
     original = runner.build_monitor_graph
@@ -231,6 +270,7 @@ def test_partial_outage_is_still_a_success(database):
 def test_run_monitor_reports_failure_for_the_cli_exit_code(database):
     deps = MonitorDeps(analyst_graph=FakeAnalystGraph(), llm=FakeLLM({}), notifier=FakeNotifier(),
                        signal_fn=lambda t: make_signals(t, ok=False))
-    database.add_watchlist("NVDA")
+    user = database.create_user("owner@example.com", "Owner", "scrypt:00:00")
+    database.add_watchlist(user["id"], "NVDA")
     result = asyncio.run(run_monitor("schedule", deps))
     assert result["ok"] is False

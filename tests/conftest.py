@@ -18,6 +18,12 @@ def database(tmp_path, monkeypatch):
     db.reset_engine()
 
 
+@pytest.fixture
+def user(database):
+    """A registered account, used to scope watchlists and history."""
+    return database.create_user("analyst@example.com", "Analyst", "scrypt:00:00")
+
+
 @pytest.fixture(autouse=True)
 def fast_retries(monkeypatch):
     monkeypatch.setattr(cfg, "LLM_RETRY_SLEEP", 0)
